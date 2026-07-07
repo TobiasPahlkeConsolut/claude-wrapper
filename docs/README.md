@@ -6,9 +6,9 @@
 [![GitHub Stars](https://img.shields.io/github/stars/ChrisColeTech/claude-wrapper.svg)](https://github.com/ChrisColeTech/claude-wrapper/stargazers)
 [![GitHub Issues](https://img.shields.io/github/issues/ChrisColeTech/claude-wrapper.svg)](https://github.com/ChrisColeTech/claude-wrapper/issues)
 
-**OpenAI-compatible HTTP API wrapper for Claude Code CLI with Enhanced Performance**
+**OpenAI-compatible HTTP API wrapper for Claude Code CLI**
 
-Transform your Claude Code CLI into a powerful HTTP API server that accepts OpenAI Chat Completions requests. Features intelligent system prompt optimization, WSL integration, streaming responses, and comprehensive CLI tooling.
+Transform your Claude Code CLI into a powerful HTTP API server that accepts OpenAI Chat Completions requests. Every request is a single, stateless call to the `claude` CLI — full conversation history and system prompt in, one answer out — with WSL integration, streaming responses (including tool calls), and comprehensive CLI tooling.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ Transform your Claude Code CLI into a powerful HTTP API server that accepts Open
 - [CLI Usage](#cli-usage)
 - [Authentication](#authentication)
 - [WSL Integration](#wsl-integration)
-- [System Prompt Optimization](#system-prompt-optimization)
+- [Request Handling](#request-handling)
 - [Tool Integration](#tool-integration)
 - [Streaming](#streaming)
 - [Configuration](#configuration)
@@ -43,13 +43,12 @@ This approach gives you maximum flexibility with Claude's tool capabilities.
 ## Key Features
 
 - **🔌 OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
-- **⚡ System Prompt Optimization**: 60-70% performance improvement with intelligent session caching
-- **🌊 Streaming Support**: Real-time response streaming with Server-Sent Events
+- **⚡ Stateless & Fast**: One `claude` CLI call per request — no server-side session state, no double round-trips for system prompts
+- **🌊 Streaming Support**: Real-time response streaming with Server-Sent Events, including tool calls
 - **🪟 WSL Integration**: Automatic port forwarding script generation for seamless Windows access
 - **🔍 Auto-Detection**: Automatically finds Claude CLI across different installation methods (npm, Docker, aliases, environment variables)
 - **🛡️ API Protection**: Optional bearer token authentication for endpoint security
-- **🛠️ Perfect Tool Calls**: Claude automatically generates OpenAI `tool_calls` format
-- **⚡ Zero Conversion**: Direct JSON passthrough, no parsing overhead
+- **🛠️ Client-Owned Tool Calls**: The server never executes tools itself (`--tools ""` / `--safe-mode`) — Claude answers or emits a `tool_calls` response, and your client executes it
 - **🔄 Multi-Tool Support**: Multiple tools in single response with intelligent orchestration
 - **📡 Cross-Platform**: Works across different Claude Code CLI installations
 - **🏗️ Production Ready**: Comprehensive CLI, background services, and monitoring
@@ -113,7 +112,7 @@ Options:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/v1/chat/completions` | Main chat completions with session support |
-| `GET` | `/v1/models` | List available Claude models (sonnet, opus) |
+| `GET` | `/v1/models` | List available Claude models (Fable 5, Opus, Sonnet, Haiku — aliases and pinned versions) |
 | `GET` | `/v1/sessions` | List all active sessions |
 | `GET` | `/v1/sessions/stats` | Get session statistics |
 | `GET` | `/v1/sessions/:id` | Get specific session details |
@@ -322,42 +321,25 @@ If you prefer manual setup, use this command in Windows Command Prompt (as Admin
 netsh interface portproxy add v4tov4 listenport=9000 listenaddress=0.0.0.0 connectport=9000 connectaddress=172.29.125.14
 ```
 
-## System Prompt Optimization
+## Request Handling
 
-Claude Wrapper includes intelligent system prompt optimization that provides significant performance improvements for repeated system prompts.
-
-### Performance Benefits
-
-- **60-70% faster responses** for requests with repeated system prompts
-- **Intelligent session caching** for system prompt reuse
-- **Automatic optimization** without client changes
-- **Token efficiency** by avoiding repeated system prompt processing
+Every chat completion is a single, stateless call to the `claude` CLI. There is no server-side Claude session and no `--resume` — the full message history the client sends is exactly what gets used to build that one call.
 
 ### How It Works
 
-**Traditional approach (slow):**
 ```bash
-# Every request sends full system prompt + user message
-Request 1: [System: "You are a helpful assistant"] + [User: "Hello"] → Process everything
-Request 2: [System: "You are a helpful assistant"] + [User: "Goodbye"] → Process everything again
+# Each request is independent - the client's own message history IS the state
+Request 1: [System: "You are a helpful assistant"] + [User: "Hello"]   → one claude CLI call
+Request 2: [System: "You are a helpful assistant"] + [User: "Hello"] + [Assistant: "Hi!"] + [User: "Goodbye"] → one claude CLI call
 ```
 
-**Optimized approach (fast):**
-```bash
-# System prompt processed once, then cached for reuse
-Request 1: [System: "You are a helpful assistant"] → Setup session, cache system prompt
-Request 2: [User: "Hello"] → Reuse cached session (60-70% faster)
-Request 3: [User: "Goodbye"] → Reuse cached session (60-70% faster)
-```
+- **System prompt** → passed via the CLI's `--system-prompt-file` flag (replaces Claude Code's own default identity outright, rather than fighting it as embedded text)
+- **Conversation history** (user/assistant/tool messages) → flattened and piped via stdin, redirected from a temp file so long IDE-supplied context never hits the OS command-line length limit
+- **Tool execution** → disabled on the Claude Code side (`--tools "" --safe-mode`) so tool calls always come back to the client as a `tool_calls` response instead of Claude attempting to invoke them itself
 
-### Automatic Detection
+This design was chosen after an earlier two-stage "session" implementation (system prompt registered once via `--resume`, then reused across requests) turned out to be pure overhead: IDE clients already resend the full history on every request, so there was nothing to cache. It also had a real bug — sessions were keyed only by a hash of the system prompt text, so unrelated conversations sharing a system prompt would bleed context into each other. The current one-call design is both simpler and roughly twice as fast for the common case of a new or changing system prompt.
 
-The wrapper automatically detects when requests use the same system prompt and:
-- Creates an optimized session for the system prompt
-- Reuses the session for subsequent requests with the same system prompt
-- Manages session lifecycle automatically
-- Falls back to normal processing when system prompts change
-- Works transparently without requiring client modifications
+Switching models mid-conversation (e.g. in an IDE's model picker) works cleanly for the same reason — nothing server-side is pinned to a particular model, so the next request just uses whichever `model` value it's given with the same accumulated history.
 
 ## Tool Integration
 
@@ -429,6 +411,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 #### Core Configuration
 ```bash
 PORT=8000                    # Server port (default: 8000)
+TIMEOUT=300000               # claude CLI execution timeout in ms (default: 300000 / 5 min)
 NODE_ENV=production          # Environment mode (development/production)
 LOG_LEVEL=info              # Logging level (debug/info/warn/error)
 ```
@@ -447,11 +430,11 @@ SESSION_MESSAGE_LIMIT=100   # Maximum messages per session
 ```
 
 #### Streaming
-```bash
-STREAMING_ENABLED=true      # Enable streaming support
-STREAMING_TIMEOUT=30000     # Streaming timeout in milliseconds
-STREAMING_CHUNK_SIZE=1024   # Maximum chunk size
-```
+Streaming behavior (connection ceiling, chunk size, heartbeat interval) is
+currently configured via constants in `app/src/config/constants.ts`
+(`STREAMING_CONFIG`), not environment variables. The connection ceiling is
+10 minutes — it must stay above `TIMEOUT` above, since the streaming handler
+waits for one full non-streamed `claude` response before chunking it out.
 
 ## Process Management
 
@@ -521,52 +504,37 @@ npm run clean            # Clean build artifacts
 ## Production Features
 
 ### Validated Concepts
-- **100% success rate** with Claude Sonnet 4 and template approach
-- **Perfect tool_calls generation** - OpenAI format without training
-- **Zero conversion overhead** - Direct JSON passthrough
-- **Cross-platform compatibility** - Works across Claude installations
-- **Session continuity** - Intelligent conversation management
-- **Streaming responses** - Real-time Server-Sent Events
+- **Server builds the response envelope** - the model is never asked to fabricate ids/timestamps/usage or "become" a different API's schema (Claude Code correctly refuses that as an impersonation attempt); it only answers or emits a minimal `tool_calls` JSON snippet
+- **Stateless request handling** - one `claude` CLI call per request, full history via stdin, system prompt via `--system-prompt-file`; no server-side session to drift out of sync
+- **Client-owned tool execution** - Claude Code's own tool/MCP execution is disabled (`--tools "" --safe-mode`), so tool calls always round-trip back to the client instead of Claude trying (and failing) to invoke them itself
+- **Cross-platform compatibility** - works across Claude installations
+- **Streaming responses** - real-time Server-Sent Events, including tool calls
 
 ### Key Discoveries
-- **Template-based format control** beats abstract instructions
-- **Stdin approach** handles unlimited prompt lengths
-- **Client-side tool execution** provides security and flexibility
-- **Simple architecture** achieves enterprise-grade compatibility
-- **Session management** enables complex multi-turn conversations
+- **Minimal, purpose-specific instructions beat full-envelope templates** - asking Claude to fabricate a complete fake API response reads as prompt injection and gets refused
+- **Stdin + temp files** handle unlimited prompt and system-prompt lengths without hitting the OS command-line length limit
+- **Client-side tool execution** provides security and flexibility, and matches how IDE tool integrations (e.g. MCP servers) actually work - they run in the client's process, not the wrapper's
+- **Simple, stateless architecture** achieves enterprise-grade compatibility without the coordination bugs a server-side session cache introduces
 - **Background services** provide production-ready reliability
 
 ### Performance
-- **~5ms template injection** overhead
-- **No parsing bottlenecks** 
+- **No parsing bottlenecks**
 - **Direct JSON passthrough**
-- **Horizontally scalable** architecture
-- **Efficient session storage** with automatic cleanup
-- **Streaming latency** under 100ms first chunk delivery
+- **Horizontally scalable** architecture (no shared session state between instances)
+- **Efficient session storage** with automatic cleanup (the separate `/v1/sessions` API, not the request-handling path)
+- **Streaming latency** under 100ms first chunk delivery for the initial role chunk
 
 ## Current Status
 
-**✅ PHASE 5 COMPLETE** - System Prompt Optimization + WSL Integration
-
 **Production-Ready Implementation:**
-- **✅ Template-based format control** (100% success rate)
-- **✅ Zero-conversion architecture** (direct JSON passthrough) 
-- **✅ Client-side tool execution** (secure MCP integration)
+- **✅ Stateless request handling** - single `claude` CLI call per request, no server-side session drift
+- **✅ Zero-conversion architecture** (direct JSON passthrough)
+- **✅ Client-side tool execution** (Claude Code's own tools disabled; MCP integration stays client-side)
 - **✅ Production CLI interface** with global installation
 - **✅ Background service architecture** with proper daemon management
-- **✅ System prompt optimization** with 60-70% performance improvements
 - **✅ WSL integration** with automatic port forwarding script generation
-- **✅ Real-time streaming** with Server-Sent Events
-- **✅ Comprehensive test suite** (32 tests, 100% passing)
-
-### Latest Features Implemented
-- **✅ System Prompt Optimization** - Intelligent caching with Claude CLI `--resume` flag
-- **✅ WSL Integration** - Automatic port forwarding script generation for Windows access
-- **✅ Performance Improvements** - 60-70% faster responses for repeated system prompts
-- **✅ Dynamic Script Generation** - Works with any port configuration automatically
-- **✅ Windows File Integration** - Scripts saved to accessible `C:\claude-wrapper\` location
-- **✅ Enhanced CLI Output** - Clear instructions and file paths for WSL users
-- **✅ HTTP Script Endpoints** - Alternative access via HTTP for generated scripts
+- **✅ Real-time streaming** with Server-Sent Events, including tool calls
+- **✅ Comprehensive test suite**
 
 ## License
 

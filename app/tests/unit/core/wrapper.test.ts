@@ -19,9 +19,6 @@ describe('CoreWrapper', () => {
 
     // Create wrapper with mocked dependencies
     wrapper = new CoreWrapper(mockClaudeClient, mockValidator);
-    
-    // Clear any sessions between tests
-    (wrapper as any).claudeSessions.clear();
   });
 
   afterEach(() => {
@@ -29,8 +26,8 @@ describe('CoreWrapper', () => {
     ValidatorMock.reset();
   });
 
-  describe('processNormally - no system prompt', () => {
-    it('should process request without system prompt optimization', async () => {
+  describe('basic completion', () => {
+    it('should process a simple request in a single call', async () => {
       const request: OpenAIRequest = {
         model: 'sonnet',
         messages: [
@@ -60,10 +57,8 @@ describe('CoreWrapper', () => {
         })]
       }));
     });
-  });
 
-  describe('initializeSystemPromptSession - new system prompt', () => {
-    it('should create new session for system prompt', async () => {
+    it('should send system and user messages together in one call', async () => {
       const request: OpenAIRequest = {
         model: 'sonnet',
         messages: [
@@ -72,33 +67,20 @@ describe('CoreWrapper', () => {
         ]
       };
 
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
       ClaudeClientMock.setDefaultResponse('The answer is 8');
-      ValidatorMock.setValidationAsValid(false); // Non-JSON response
+      ValidatorMock.setValidationAsValid(false);
 
       const result = await wrapper.handleChatCompletion(request);
 
-      // Verify session setup call
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          model: 'sonnet',
-          messages: [{ role: 'system', content: 'You are a math tutor.' }]
-        }),
-        null,
-        true // useJsonOutput for session setup
-      );
+      // Exactly one call - no separate session-setup round trip
+      expect(mockClaudeClient.execute).toHaveBeenCalledTimes(1);
+      expect(mockClaudeClient.executeWithSession).not.toHaveBeenCalled();
 
-      // Verify message processing call
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          model: 'sonnet',
-          messages: [{ role: 'user', content: 'What is 5+3?' }] // system prompt stripped
-        }),
-        'session123',
-        false // regular processing
-      );
+      const [claudeRequest] = mockClaudeClient.execute.mock.calls[0]!;
+      expect(claudeRequest.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'system', content: 'You are a math tutor.' }),
+        expect.objectContaining({ role: 'user', content: 'What is 5+3?' })
+      ]));
 
       expect(result).toEqual(expect.objectContaining({
         choices: [expect.objectContaining({
@@ -109,27 +91,9 @@ describe('CoreWrapper', () => {
       }));
     });
 
-    it('should throw error if session setup fails', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helper.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('{"result":"Ready"}'); // missing session_id
-
-      await expect(wrapper.handleChatCompletion(request)).rejects.toThrow(
-        'Failed to extract session ID from Claude CLI response'
-      );
-    });
-  });
-
-  describe('processWithSession - session reuse', () => {
-    it('should reuse existing session for same system prompt', async () => {
+    it('should send the full message history on every call (no server-side session state)', async () => {
       const systemPrompt = 'You are a math tutor.';
-      
+
       const firstRequest: OpenAIRequest = {
         model: 'sonnet',
         messages: [
@@ -142,97 +106,28 @@ describe('CoreWrapper', () => {
         model: 'sonnet',
         messages: [
           { role: 'system', content: systemPrompt },
+          { role: 'user', content: 'What is 5+3?' },
+          { role: 'assistant', content: 'The answer is 8' },
           { role: 'user', content: 'What is 10-4?' }
         ]
       };
 
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
-      ClaudeClientMock.setSessionResponses({
-        'session123': 'Session response'
-      });
-      ValidatorMock.setValidationAsValid(false); // Non-JSON response
-
-      // First request - creates session
-      await wrapper.handleChatCompletion(firstRequest);
-      
-      // Second request - should reuse session
-      await wrapper.handleChatCompletion(secondRequest);
-
-      // Should be called 3 times total: setup + first message + second message
-      expect(mockClaudeClient.executeWithSession).toHaveBeenCalledTimes(3);
-      
-      // Third call should reuse session (no setup)
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        3,
-        expect.objectContaining({
-          messages: [{ role: 'user', content: 'What is 10-4?' }]
-        }),
-        'session123',
-        false
-      );
-    });
-
-    it('should create new session for different system prompt', async () => {
-      const firstRequest: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a math tutor.' },
-          { role: 'user', content: 'What is 5+3?' }
-        ]
-      };
-
-      const secondRequest: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a creative writer.' },
-          { role: 'user', content: 'Write a poem' }
-        ]
-      };
-
-      // Setup different session responses
-      let sessionCallCount = 0;
-      mockClaudeClient.executeWithSession.mockImplementation(async (_request, sessionId, useJsonOutput) => {
-        sessionCallCount++;
-        
-        if (sessionId === null && useJsonOutput) {
-          // Session setup calls
-          if (sessionCallCount === 1) {
-            return '{"session_id":"session1","result":"Ready"}';
-          } else if (sessionCallCount === 3) {
-            return '{"session_id":"session2","result":"Ready"}';
-          }
-        }
-        
-        return 'Response content';
-      });
-
-      ValidatorMock.setValidationAsValid(false); // Non-JSON response
+      ClaudeClientMock.setDefaultResponse('Response');
+      ValidatorMock.setValidationAsValid(false);
 
       await wrapper.handleChatCompletion(firstRequest);
       await wrapper.handleChatCompletion(secondRequest);
 
-      // Should create two different sessions (4 total calls)
-      expect(mockClaudeClient.executeWithSession).toHaveBeenCalledTimes(4);
-      
-      // First session setup
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          messages: [{ role: 'system', content: 'You are a math tutor.' }]
-        }),
-        null,
-        true
-      );
+      expect(mockClaudeClient.execute).toHaveBeenCalledTimes(2);
+      expect(mockClaudeClient.executeWithSession).not.toHaveBeenCalled();
 
-      // Second session setup
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        3,
-        expect.objectContaining({
-          messages: [{ role: 'system', content: 'You are a creative writer.' }]
-        }),
-        null,
-        true
-      );
+      const [secondClaudeRequest] = mockClaudeClient.execute.mock.calls[1]!;
+      expect(secondClaudeRequest.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: 'system', content: systemPrompt }),
+        expect.objectContaining({ role: 'user', content: 'What is 5+3?' }),
+        expect.objectContaining({ role: 'assistant', content: 'The answer is 8' }),
+        expect.objectContaining({ role: 'user', content: 'What is 10-4?' })
+      ]));
     });
   });
 
@@ -283,6 +178,85 @@ describe('CoreWrapper', () => {
       expect(result).toEqual(parsedResponse);
       expect(mockValidator.parse).toHaveBeenCalledWith(validJsonResponse);
     });
+
+    it('should parse a minimal tool_calls JSON snippet into a full OpenAI response', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'What is the weather in Paris?' }],
+        tools: [
+          { type: 'function', function: { name: 'get_weather', description: 'Get weather' } }
+        ]
+      };
+
+      ClaudeClientMock.setDefaultResponse('{"tool_calls":[{"name":"get_weather","arguments":{"location":"Paris"}}]}');
+      ValidatorMock.setValidationAsValid(false);
+
+      const result = await wrapper.handleChatCompletion(request);
+
+      expect(result).toEqual(expect.objectContaining({
+        model: 'sonnet',
+        choices: [expect.objectContaining({
+          message: expect.objectContaining({
+            role: 'assistant',
+            content: null,
+            tool_calls: [expect.objectContaining({
+              type: 'function',
+              function: expect.objectContaining({
+                name: 'get_weather',
+                arguments: '{"location":"Paris"}'
+              })
+            })]
+          }),
+          finish_reason: 'tool_calls'
+        })]
+      }));
+    });
+
+    it('should still detect a tool_calls JSON object even when the model prefaces it with prose', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'What is the weather in Paris?' }],
+        tools: [
+          { type: 'function', function: { name: 'get_weather', description: 'Get weather' } }
+        ]
+      };
+
+      ClaudeClientMock.setDefaultResponse(
+        'I\'ll check that for you.\n\n{"tool_calls":[{"name":"get_weather","arguments":{"location":"Paris"}}]}'
+      );
+      ValidatorMock.setValidationAsValid(false);
+
+      const result = await wrapper.handleChatCompletion(request);
+
+      expect(result).toEqual(expect.objectContaining({
+        choices: [expect.objectContaining({
+          message: expect.objectContaining({
+            content: null,
+            tool_calls: [expect.objectContaining({
+              function: expect.objectContaining({
+                name: 'get_weather',
+                arguments: '{"location":"Paris"}'
+              })
+            })]
+          }),
+          finish_reason: 'tool_calls'
+        })]
+      }));
+    });
+
+    it('should treat a response with no tool_calls array as plain text', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Hello' }]
+      };
+
+      ClaudeClientMock.setDefaultResponse('{"not_tool_calls": true}');
+      ValidatorMock.setValidationAsValid(false);
+
+      const result = await wrapper.handleChatCompletion(request);
+
+      expect(result.choices[0]!.message.content).toBe('{"not_tool_calls": true}');
+    });
   });
 
   describe('format instructions', () => {
@@ -311,7 +285,7 @@ describe('CoreWrapper', () => {
       );
     });
 
-    it('should add format instructions for multi-turn conversations', async () => {
+    it('should NOT add format instructions for multi-turn conversations without tools', async () => {
       const request: OpenAIRequest = {
         model: 'sonnet',
         messages: [
@@ -328,14 +302,12 @@ describe('CoreWrapper', () => {
 
       expect(mockClaudeClient.execute).toHaveBeenCalledWith(
         expect.objectContaining({
-          messages: expect.arrayContaining([
-            expect.objectContaining({ role: 'system' }) // Format instruction
-          ])
+          messages: request.messages // No format instruction injected
         })
       );
     });
 
-    it('should add format instructions for long user messages', async () => {
+    it('should NOT add format instructions for long user messages without tools', async () => {
       const longMessage = 'a'.repeat(250); // > 200 characters
       const request: OpenAIRequest = {
         model: 'sonnet',
@@ -349,9 +321,28 @@ describe('CoreWrapper', () => {
 
       expect(mockClaudeClient.execute).toHaveBeenCalledWith(
         expect.objectContaining({
-          messages: expect.arrayContaining([
-            expect.objectContaining({ role: 'system' }) // Format instruction
-          ])
+          messages: request.messages // No format instruction injected
+        })
+      );
+    });
+
+    it('should NOT add format instructions when a system prompt is present but there are no tools', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'Hello' }
+        ]
+      };
+
+      ClaudeClientMock.setDefaultResponse('Hi there');
+      ValidatorMock.setValidationAsValid(false);
+
+      await wrapper.handleChatCompletion(request);
+
+      expect(mockClaudeClient.execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: request.messages // Only the caller's own system message, nothing injected
         })
       );
     });
@@ -375,106 +366,6 @@ describe('CoreWrapper', () => {
     });
   });
 
-  describe('system prompt hash generation', () => {
-    it('should generate same hash for identical system prompts', async () => {
-      const systemPrompt = 'You are a helpful assistant.';
-      
-      const request1: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      const request2: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'Hi there' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
-      ClaudeClientMock.setDefaultResponse('Response');
-      ValidatorMock.setValidationAsValid(false);
-
-      await wrapper.handleChatCompletion(request1);
-      await wrapper.handleChatCompletion(request2);
-
-      // Should reuse session - only 3 calls total (setup + 2 messages)
-      expect(mockClaudeClient.executeWithSession).toHaveBeenCalledTimes(3);
-    });
-
-    it('should generate different hash for different system prompts', async () => {
-      const request1: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      const request2: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a creative writer.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      let sessionCallCount = 0;
-      mockClaudeClient.executeWithSession.mockImplementation(async (_request, sessionId, useJsonOutput) => {
-        sessionCallCount++;
-        
-        if (sessionId === null && useJsonOutput) {
-          if (sessionCallCount === 1) {
-            return '{"session_id":"session1","result":"Ready"}';
-          } else if (sessionCallCount === 3) {
-            return '{"session_id":"session2","result":"Ready"}';
-          }
-        }
-        
-        return 'Response';
-      });
-
-      ValidatorMock.setValidationAsValid(false);
-
-      await wrapper.handleChatCompletion(request1);
-      await wrapper.handleChatCompletion(request2);
-
-      // Should create separate sessions - 4 calls total (2 setups + 2 messages)
-      expect(mockClaudeClient.executeWithSession).toHaveBeenCalledTimes(4);
-    });
-
-    it('should handle multiple system prompts in single request', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'system', content: 'Be concise in your responses.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
-      ClaudeClientMock.setDefaultResponse('Response');
-      ValidatorMock.setValidationAsValid(false);
-
-      await wrapper.handleChatCompletion(request);
-
-      // Should combine system prompts for session setup
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          messages: [{ role: 'system', content: 'You are a helpful assistant.\n\nBe concise in your responses.' }]
-        }),
-        null,
-        true
-      );
-    });
-  });
-
   describe('error handling', () => {
     it('should handle Claude client execution errors', async () => {
       const request: OpenAIRequest = {
@@ -485,58 +376,6 @@ describe('CoreWrapper', () => {
       ClaudeClientMock.setExecutionFailure(true);
 
       await expect(wrapper.handleChatCompletion(request)).rejects.toThrow('Claude CLI execution failed');
-    });
-
-    it('should handle Claude client session execution errors', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helper.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionExecutionFailure(true);
-
-      await expect(wrapper.handleChatCompletion(request)).rejects.toThrow('Claude CLI session execution failed');
-    });
-
-    it('should handle invalid JSON in session setup response', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helper.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('invalid json');
-
-      await expect(wrapper.handleChatCompletion(request)).rejects.toThrow(
-        'Failed to extract session ID from Claude CLI response'
-      );
-    });
-
-    it('should handle empty session setup response', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helper.' },
-          { role: 'user', content: 'Hello' }
-        ]
-      };
-
-      // Mock the executeWithSession to return empty string for session setup
-      mockClaudeClient.executeWithSession.mockImplementation(async (_request, sessionId, useJsonOutput) => {
-        if (sessionId === null && useJsonOutput) {
-          return ''; // Empty response for session setup
-        }
-        return 'Mock response';
-      });
-
-      await expect(wrapper.handleChatCompletion(request)).rejects.toThrow(
-        'Failed to extract session ID from Claude CLI response'
-      );
     });
   });
 
@@ -559,82 +398,6 @@ describe('CoreWrapper', () => {
             content: 'Response'
           })
         })]
-      }));
-    });
-  });
-
-  describe('session state management', () => {
-    it('should update session last used time on reuse', async () => {
-      const systemPrompt = 'You are a helper.';
-      
-      const request1: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'First message' }
-        ]
-      };
-
-      const request2: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'Second message' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
-      ClaudeClientMock.setDefaultResponse('Response');
-      ValidatorMock.setValidationAsValid(false);
-
-      await wrapper.handleChatCompletion(request1);
-      
-      // Get session state after first request
-      const sessions = (wrapper as any).claudeSessions;
-      const sessionKeys = Array.from(sessions.keys());
-      const firstSessionState = sessions.get(sessionKeys[0]);
-      const firstLastUsed = firstSessionState?.lastUsed;
-
-      // Wait a bit to ensure timestamp difference
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      await wrapper.handleChatCompletion(request2);
-
-      // Check that lastUsed was updated
-      const secondSessionState = sessions.get(sessionKeys[0]);
-      const secondLastUsed = secondSessionState?.lastUsed;
-
-      expect(secondLastUsed).toBeDefined();
-      expect(firstLastUsed).toBeDefined();
-      expect(secondLastUsed!.getTime()).toBeGreaterThan(firstLastUsed!.getTime());
-    });
-
-    it('should store correct session content and hash', async () => {
-      const systemPrompt = 'You are a math tutor specializing in algebra.';
-      
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'Help me with equations' }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
-      ClaudeClientMock.setDefaultResponse('Response');
-      ValidatorMock.setValidationAsValid(false);
-
-      await wrapper.handleChatCompletion(request);
-
-      const sessions = (wrapper as any).claudeSessions;
-      const sessionKeys = Array.from(sessions.keys());
-      const sessionState = sessions.get(sessionKeys[0]);
-
-      expect(sessionState).toEqual(expect.objectContaining({
-        claudeSessionId: 'session123',
-        systemPromptContent: systemPrompt,
-        systemPromptHash: sessionKeys[0],
-        lastUsed: expect.any(Date)
       }));
     });
   });
@@ -668,20 +431,17 @@ describe('CoreWrapper', () => {
         ]
       };
 
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
       ClaudeClientMock.setDefaultResponse('Response');
       ValidatorMock.setValidationAsValid(false);
 
       await wrapper.handleChatCompletion(request);
 
-      // Should strip system prompt for second call, leaving empty messages
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        2,
+      expect(mockClaudeClient.execute).toHaveBeenCalledWith(
         expect.objectContaining({
-          messages: []
-        }),
-        'session123',
-        false
+          messages: expect.arrayContaining([
+            expect.objectContaining({ role: 'system', content: 'You are a helper.' })
+          ])
+        })
       );
     });
 
@@ -697,35 +457,21 @@ describe('CoreWrapper', () => {
         ]
       };
 
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
       ClaudeClientMock.setDefaultResponse('Response');
       ValidatorMock.setValidationAsValid(false);
 
       await wrapper.handleChatCompletion(request);
 
-      // Should combine all system prompts for session setup
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          messages: [{ role: 'system', content: 'You are a helper.\n\nBe brief.' }]
-        }),
-        null,
-        true
-      );
-
-      // Should strip system prompts for message processing and add format instructions
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        2,
+      expect(mockClaudeClient.execute).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: expect.arrayContaining([
-            expect.objectContaining({ role: 'system' }), // Format instruction
+            expect.objectContaining({ role: 'system', content: 'You are a helper.' }),
             expect.objectContaining({ role: 'user', content: 'Hello' }),
             expect.objectContaining({ role: 'assistant', content: 'Hi there' }),
+            expect.objectContaining({ role: 'system', content: 'Be brief.' }),
             expect.objectContaining({ role: 'user', content: 'How are you?' })
           ])
-        }),
-        'session123',
-        false
+        })
       );
     });
 
@@ -738,7 +484,6 @@ describe('CoreWrapper', () => {
         ]
       };
 
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"session123","result":"Ready"}');
       ClaudeClientMock.setDefaultResponse('Response');
       ValidatorMock.setValidationAsValid(false);
 
@@ -773,33 +518,8 @@ describe('CoreWrapper', () => {
         ]
       };
 
-      const toolResponse = JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion',
-        created: Date.now(),
-        model: 'sonnet',
-        choices: [{
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_123',
-              type: 'function',
-              function: {
-                name: 'get_weather',
-                arguments: '{"location": "New York"}'
-              }
-            }]
-          },
-          finish_reason: 'tool_calls'
-        }],
-        usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 }
-      });
-
-      ClaudeClientMock.setDefaultResponse(toolResponse);
-      ValidatorMock.setValidationAsValid(true);
-      ValidatorMock.setParseResult(JSON.parse(toolResponse));
+      ClaudeClientMock.setDefaultResponse('{"tool_calls":[{"name":"get_weather","arguments":{"location":"New York"}}]}');
+      ValidatorMock.setValidationAsValid(false);
 
       const result = await wrapper.handleChatCompletion(request);
 
@@ -835,114 +555,13 @@ describe('CoreWrapper', () => {
       }));
     });
 
-    it('should handle tool calls with session optimization', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant with access to tools.' },
-          { role: 'user', content: 'What is the weather in San Francisco?' }
-        ],
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'get_weather',
-              description: 'Get weather information',
-              parameters: {
-                type: 'object',
-                properties: {
-                  location: { type: 'string' }
-                }
-              }
-            }
-          }
-        ]
-      };
-
-      const toolResponse = JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion',
-        created: Date.now(),
-        model: 'sonnet',
-        choices: [{
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_456',
-              type: 'function',
-              function: {
-                name: 'get_weather',
-                arguments: '{"location": "San Francisco"}'
-              }
-            }]
-          },
-          finish_reason: 'tool_calls'
-        }],
-        usage: { prompt_tokens: 60, completion_tokens: 25, total_tokens: 85 }
-      });
-
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"tool_session_123","result":"Ready"}');
-      ClaudeClientMock.setDefaultResponse(toolResponse);
-      ValidatorMock.setValidationAsValid(true);
-      ValidatorMock.setParseResult(JSON.parse(toolResponse));
-
-      const result = await wrapper.handleChatCompletion(request);
-
-      // Should setup session with system prompt
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          messages: [{ role: 'system', content: 'You are a helpful assistant with access to tools.' }]
-        }),
-        null,
-        true
-      );
-
-      // Should process message with tools
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          messages: expect.arrayContaining([
-            expect.objectContaining({ role: 'system' }), // Format instruction
-            expect.objectContaining({ role: 'user', content: 'What is the weather in San Francisco?' })
-          ]),
-          tools: expect.arrayContaining([
-            expect.objectContaining({
-              type: 'function',
-              function: expect.objectContaining({
-                name: 'get_weather'
-              })
-            })
-          ])
-        }),
-        'tool_session_123',
-        false
-      );
-
-      expect(result).toEqual(expect.objectContaining({
-        choices: [expect.objectContaining({
-          message: expect.objectContaining({
-            tool_calls: expect.arrayContaining([
-              expect.objectContaining({
-                function: expect.objectContaining({
-                  name: 'get_weather'
-                })
-              })
-            ])
-          })
-        })]
-      }));
-    });
-
     it('should handle tool result responses', async () => {
       const request: OpenAIRequest = {
         model: 'sonnet',
         messages: [
           { role: 'user', content: 'What is the weather in Boston?' },
-          { 
-            role: 'assistant', 
+          {
+            role: 'assistant',
             content: null,
             tool_calls: [{
               id: 'call_789',
@@ -988,7 +607,7 @@ describe('CoreWrapper', () => {
           messages: expect.arrayContaining([
             expect.objectContaining({ role: 'system' }), // Format instruction
             expect.objectContaining({ role: 'user', content: 'What is the weather in Boston?' }),
-            expect.objectContaining({ 
+            expect.objectContaining({
               role: 'assistant',
               tool_calls: expect.arrayContaining([
                 expect.objectContaining({
@@ -998,7 +617,7 @@ describe('CoreWrapper', () => {
                 })
               ])
             }),
-            expect.objectContaining({ 
+            expect.objectContaining({
               role: 'tool',
               content: 'The weather in Boston is sunny, 72°F',
               tool_call_id: 'call_789'
@@ -1038,42 +657,14 @@ describe('CoreWrapper', () => {
       };
 
       const multiToolResponse = JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion',
-        created: Date.now(),
-        model: 'sonnet',
-        choices: [{
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [
-              {
-                id: 'call_ny',
-                type: 'function',
-                function: {
-                  name: 'get_weather',
-                  arguments: '{"location": "New York"}'
-                }
-              },
-              {
-                id: 'call_london',
-                type: 'function',
-                function: {
-                  name: 'get_weather',
-                  arguments: '{"location": "London"}'
-                }
-              }
-            ]
-          },
-          finish_reason: 'tool_calls'
-        }],
-        usage: { prompt_tokens: 70, completion_tokens: 40, total_tokens: 110 }
+        tool_calls: [
+          { name: 'get_weather', arguments: { location: 'New York' } },
+          { name: 'get_weather', arguments: { location: 'London' } }
+        ]
       });
 
       ClaudeClientMock.setDefaultResponse(multiToolResponse);
-      ValidatorMock.setValidationAsValid(true);
-      ValidatorMock.setParseResult(JSON.parse(multiToolResponse));
+      ValidatorMock.setValidationAsValid(false);
 
       const result = await wrapper.handleChatCompletion(request);
 
@@ -1082,107 +673,15 @@ describe('CoreWrapper', () => {
           message: expect.objectContaining({
             tool_calls: expect.arrayContaining([
               expect.objectContaining({
-                id: 'call_ny',
                 function: expect.objectContaining({
                   name: 'get_weather',
-                  arguments: '{"location": "New York"}'
+                  arguments: '{"location":"New York"}'
                 })
               }),
               expect.objectContaining({
-                id: 'call_london',
                 function: expect.objectContaining({
                   name: 'get_weather',
-                  arguments: '{"location": "London"}'
-                })
-              })
-            ])
-          })
-        })]
-      }));
-    });
-
-    it('should handle complex MCP tool schema', async () => {
-      const request: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [{ role: 'user', content: 'Search for files in my project' }],
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'search_files',
-              description: 'Search for files in a directory',
-              parameters: {
-                type: 'object',
-                properties: {
-                  directory: { 
-                    type: 'string', 
-                    description: 'The directory to search in' 
-                  },
-                  pattern: { 
-                    type: 'string', 
-                    description: 'The search pattern (glob or regex)' 
-                  },
-                  recursive: { 
-                    type: 'boolean', 
-                    description: 'Whether to search recursively',
-                    default: true
-                  },
-                  file_types: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'File extensions to include'
-                  }
-                },
-                required: ['directory', 'pattern']
-              }
-            }
-          }
-        ]
-      };
-
-      const complexToolResponse = JSON.stringify({
-        id: 'chatcmpl-test',
-        object: 'chat.completion',
-        created: Date.now(),
-        model: 'sonnet',
-        choices: [{
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: 'call_search',
-              type: 'function',
-              function: {
-                name: 'search_files',
-                arguments: JSON.stringify({
-                  directory: './src',
-                  pattern: '*.ts',
-                  recursive: true,
-                  file_types: ['ts', 'tsx']
-                })
-              }
-            }]
-          },
-          finish_reason: 'tool_calls'
-        }],
-        usage: { prompt_tokens: 80, completion_tokens: 35, total_tokens: 115 }
-      });
-
-      ClaudeClientMock.setDefaultResponse(complexToolResponse);
-      ValidatorMock.setValidationAsValid(true);
-      ValidatorMock.setParseResult(JSON.parse(complexToolResponse));
-
-      const result = await wrapper.handleChatCompletion(request);
-
-      expect(result).toEqual(expect.objectContaining({
-        choices: [expect.objectContaining({
-          message: expect.objectContaining({
-            tool_calls: expect.arrayContaining([
-              expect.objectContaining({
-                function: expect.objectContaining({
-                  name: 'search_files',
-                  arguments: expect.stringContaining('src')
+                  arguments: '{"location":"London"}'
                 })
               })
             ])
@@ -1196,7 +695,7 @@ describe('CoreWrapper', () => {
         model: 'sonnet',
         messages: [
           { role: 'user', content: 'Get weather for InvalidCity' },
-          { 
+          {
             role: 'assistant',
             content: null,
             tool_calls: [{
@@ -1245,83 +744,6 @@ describe('CoreWrapper', () => {
           })
         })]
       }));
-    });
-
-    it('should handle tools with session reuse', async () => {
-      const systemPrompt = 'You are an AI assistant with access to weather tools.';
-      
-      const request1: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'What is the weather in Chicago?' }
-        ],
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'get_weather',
-              description: 'Get weather information',
-              parameters: {
-                type: 'object',
-                properties: {
-                  location: { type: 'string' }
-                }
-              }
-            }
-          }
-        ]
-      };
-
-      const request2: OpenAIRequest = {
-        model: 'sonnet',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: 'What about in Miami?' }
-        ],
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'get_weather',
-              description: 'Get weather information',
-              parameters: {
-                type: 'object',
-                properties: {
-                  location: { type: 'string' }
-                }
-              }
-            }
-          }
-        ]
-      };
-
-      ClaudeClientMock.setSessionSetupResponse('{"session_id":"weather_session","result":"Ready"}');
-      ClaudeClientMock.setDefaultResponse('Weather response');
-      ValidatorMock.setValidationAsValid(false);
-
-      await wrapper.handleChatCompletion(request1);
-      await wrapper.handleChatCompletion(request2);
-
-      // Should reuse session - 3 calls total (setup + 2 messages)
-      expect(mockClaudeClient.executeWithSession).toHaveBeenCalledTimes(3);
-      
-      // Both requests should use the same session
-      expect(mockClaudeClient.executeWithSession).toHaveBeenNthCalledWith(
-        3,
-        expect.objectContaining({
-          tools: expect.arrayContaining([
-            expect.objectContaining({
-              type: 'function',
-              function: expect.objectContaining({
-                name: 'get_weather'
-              })
-            })
-          ])
-        }),
-        'weather_session',
-        false
-      );
     });
   });
 });

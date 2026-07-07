@@ -208,6 +208,36 @@ describe('StreamingHandler Core Functionality', () => {
       expect(testSetup.mockFormatter.formatDoneCalls).toBeGreaterThan(0);
     });
 
+    it('should emit a tool_calls chunk instead of dropping the tool call when the response has no content', async () => {
+      const mockRequest = testSetup.testDataFactory.createValidRequest();
+      const mockResponse = testSetup.testDataFactory.createValidResponse();
+      const toolCalls = [{
+        id: 'call_abc123',
+        type: 'function' as const,
+        function: { name: 'get_weather', arguments: '{"location":"Paris"}' }
+      }];
+      if (mockResponse.choices[0]) {
+        mockResponse.choices[0].message.content = null;
+        mockResponse.choices[0].message.tool_calls = toolCalls;
+        mockResponse.choices[0].finish_reason = 'tool_calls';
+      }
+
+      testSetup.mockCoreWrapper.setMockResponse(mockResponse);
+
+      const generator = handler.createStreamingResponse(mockRequest);
+      const chunks: string[] = [];
+
+      for await (const chunk of generator) {
+        chunks.push(chunk);
+      }
+
+      expect(testSetup.mockFormatter.createToolCallsChunkCalls.length).toBe(1);
+      expect(testSetup.mockFormatter.createToolCallsChunkCalls[0]?.toolCalls).toEqual(toolCalls);
+      // Must not silently fall through to the empty-content text path
+      expect(testSetup.mockFormatter.createContentChunkCalls.length).toBe(0);
+      expect(testSetup.mockFormatter.createFinalChunkCalls[0]?.finishReason).toBe('tool_calls');
+    });
+
     it('should handle response with custom finish reason', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
       const mockResponse = testSetup.testDataFactory.createValidResponse();

@@ -1,11 +1,12 @@
-import { 
-  IStreamingFormatter, 
-  IStreamingManager, 
+import {
+  IStreamingFormatter,
+  IStreamingManager,
   ICoreWrapper,
   OpenAIStreamingResponse,
   StreamConnection,
   OpenAIRequest,
-  OpenAIResponse 
+  OpenAIResponse,
+  OpenAIToolCall
 } from '../../src/types';
 
 /**
@@ -63,6 +64,7 @@ export class MockStreamingFormatter implements IStreamingFormatter {
   public formatDoneCalls: number = 0;
   public formatInitialChunkCalls: Array<{requestId: string, model: string}> = [];
   public createContentChunkCalls: Array<{requestId: string, model: string, content: string}> = [];
+  public createToolCallsChunkCalls: Array<{requestId: string, model: string, toolCalls: OpenAIToolCall[]}> = [];
   public createFinalChunkCalls: Array<{requestId: string, model: string, finishReason?: string}> = [];
 
   formatChunk(chunk: OpenAIStreamingResponse): string {
@@ -90,6 +92,11 @@ export class MockStreamingFormatter implements IStreamingFormatter {
     return `data: {"id":"${requestId}","model":"${model}","choices":[{"delta":{"content":"${content}"}}]}\n\n`;
   }
 
+  createToolCallsChunk(requestId: string, model: string, toolCalls: OpenAIToolCall[]): string {
+    this.createToolCallsChunkCalls.push({ requestId, model, toolCalls });
+    return `data: {"id":"${requestId}","model":"${model}","choices":[{"delta":{"tool_calls":${JSON.stringify(toolCalls)}}}]}\n\n`;
+  }
+
   createFinalChunk(requestId: string, model: string, finishReason: string = 'stop'): string {
     this.createFinalChunkCalls.push({ requestId, model, finishReason });
     return `data: {"id":"${requestId}","model":"${model}","choices":[{"delta":{},"finish_reason":"${finishReason}"}]}\n\n`;
@@ -101,6 +108,7 @@ export class MockStreamingFormatter implements IStreamingFormatter {
     this.formatDoneCalls = 0;
     this.formatInitialChunkCalls = [];
     this.createContentChunkCalls = [];
+    this.createToolCallsChunkCalls = [];
     this.createFinalChunkCalls = [];
   }
 }

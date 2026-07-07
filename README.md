@@ -28,11 +28,11 @@ This approach gives you **maximum flexibility** with Claude's tool capabilities.
 ## Key Features
 
 - **OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
-- **Advanced Session Management**: Intelligent system prompt optimization with 60-70% performance improvements
-- **Streaming Support**: Real-time response streaming with Server-Sent Events
+- **Stateless by Design**: Every request is a single, self-contained call to the `claude` CLI — no server-side session state to get out of sync, no double round-trips for system prompts
+- **Streaming Support**: Real-time response streaming with Server-Sent Events, including tool calls
 - **WSL Integration**: Automatic port forwarding script generation for seamless Windows access
-- **MCP Tools Support**: Full compatibility with OpenAI MCP tools and function calling
-- **Performance Optimized**: Session-based caching and token-efficient processing
+- **MCP Tools Support**: Full compatibility with OpenAI MCP tools and function calling — tool execution stays on the client side, this wrapper never runs tools itself
+- **Latest Models**: Exposes the full current Claude model lineup (Fable 5, Opus, Sonnet, Haiku) via `/v1/models`
 
 ## 📦 Installation
 
@@ -109,7 +109,7 @@ wrapper -k my-secure-key           # shorthand
 | Method   | Endpoint                    | Description                                   |
 | -------- | --------------------------- | --------------------------------------------- |
 | `POST`   | `/v1/chat/completions`      | Main chat completions with session support    |
-| `GET`    | `/v1/models`                | List available Claude models (sonnet, opus)   |
+| `GET`    | `/v1/models`                | List available Claude models (Fable 5, Opus, Sonnet, Haiku — aliases and pinned versions) |
 | `GET`    | `/v1/sessions`              | List all active sessions                      |
 | `GET`    | `/v1/sessions/stats`        | Get session statistics                        |
 | `GET`    | `/v1/sessions/:id`          | Get specific session details                  |

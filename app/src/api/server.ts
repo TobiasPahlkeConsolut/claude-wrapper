@@ -19,7 +19,10 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+// express.json() defaults to a 100kb limit, which a full IDE conversation
+// (history + open-file context + tool schemas) blows past easily, rejecting
+// the request outright with no useful error surfaced to the caller.
+app.use(express.json({ limit: '50mb' }));
 
 // Enhanced request/response logging middleware (debug mode)
 if (EnvironmentManager.isDebugMode()) {

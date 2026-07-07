@@ -1,6 +1,7 @@
-import { 
-  IStreamingFormatter, 
-  OpenAIStreamingResponse 
+import {
+  IStreamingFormatter,
+  OpenAIStreamingResponse,
+  OpenAIToolCall
 } from '../types';
 import { 
   OPENAI_STREAMING
@@ -85,6 +86,41 @@ export class StreamingFormatter implements IStreamingFormatter {
     };
     
     return this.formatChunk(contentChunk);
+  }
+
+  /**
+   * Create a tool_calls delta chunk. The full call (id/name/arguments) is
+   * sent in one delta rather than fragmented across multiple chunks - most
+   * OpenAI-compatible clients accumulate tool_calls by index regardless of
+   * how many chunks the data arrives in, so a single complete chunk parses
+   * the same as a properly fragmented stream would.
+   */
+  createToolCallsChunk(requestId: string, model: string, toolCalls: OpenAIToolCall[]): string {
+    const toolCallsChunk: OpenAIStreamingResponse = {
+      id: requestId,
+      object: OPENAI_STREAMING.OBJECT_TYPE,
+      created: Math.floor(Date.now() / 1000),
+      model: model,
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          content: null,
+          tool_calls: toolCalls.map((call, index) => ({
+            index,
+            id: call.id,
+            type: call.type,
+            function: {
+              name: call.function.name,
+              arguments: call.function.arguments
+            }
+          }))
+        },
+        finish_reason: null
+      }]
+    };
+
+    return this.formatChunk(toolCallsChunk);
   }
 
   /**

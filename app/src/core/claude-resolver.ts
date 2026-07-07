@@ -1,5 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import * as crypto from 'crypto';
 import { IClaudeResolver } from '../types';
 import { ClaudeCliError, TimeoutError } from '../utils/errors';
 import { logger } from '../utils/logger';
@@ -140,73 +144,106 @@ export class ClaudeResolver implements IClaudeResolver {
   }
 
   async executeClaudeCommandWithSession(
-    prompt: string, 
-    model: string, 
-    sessionId: string | null, 
-    useJsonOutput: boolean
+    prompt: string,
+    model: string,
+    sessionId: string | null,
+    useJsonOutput: boolean,
+    systemPrompt?: string | null
   ): Promise<string> {
     const claudeCmd = await this.findClaudeCommand();
     const config = EnvironmentManager.getConfig();
-    
-    // Build command flags
-    let flags = `--print --model ${model}`;
-    
+
+    // Build command flags. This wrapper is a text/JSON completion backend -
+    // the caller (VS Code, etc.) owns tool execution and expects it back via
+    // our tool_calls JSON convention. Without --tools "", Claude Code tries to
+    // actually invoke tools/MCP servers itself using its own (separate,
+    // often-unreachable-from-here) session config, producing confusing
+    // "No such tool available" narration instead of an answer. --safe-mode
+    // additionally skips CLAUDE.md/MCP/plugins/hooks so a request isn't
+    // shaped by whatever happens to be configured in this process's cwd.
+    let flags = `--print --model ${model} --safe-mode --tools ""`;
+
     // Add session flag if provided
     if (sessionId) {
       flags += ` --resume ${sessionId}`;
     }
-    
+
     // Add JSON output flag if requested
     if (useJsonOutput) {
       flags += ` --output-format json`;
     }
-    
+
     let command: string;
-    
+
+    // The prompt is passed to the CLI via stdin, redirected from a temp file
+    // rather than inlined as `echo '<prompt>' | ...`. Inlining puts the whole
+    // prompt on the shell command line, which blows past the ~8191 character
+    // limit cmd.exe imposes on Windows for long prompts (e.g. IDE context).
+    const tempFile = path.join(os.tmpdir(), `claude-wrapper-prompt-${crypto.randomUUID()}.txt`);
+    await fs.promises.writeFile(tempFile, prompt, 'utf-8');
+
+    // --system-prompt-file replaces Claude Code's own default identity/system
+    // prompt outright (same file-based approach, same reason: avoids the
+    // command-line length limit for long IDE-supplied system prompts). Without
+    // this, the CLI keeps its baked-in "I'm Claude Code" identity, which then
+    // conflicts with - and can refuse - whatever persona the caller asked for.
+    let systemPromptFile: string | null = null;
+    if (systemPrompt) {
+      systemPromptFile = path.join(os.tmpdir(), `claude-wrapper-system-${crypto.randomUUID()}.txt`);
+      await fs.promises.writeFile(systemPromptFile, systemPrompt, 'utf-8');
+      flags += ` --system-prompt-file "${systemPromptFile}"`;
+    }
+
     // Handle Docker commands
     if (claudeCmd.includes('docker run') || claudeCmd.includes('podman run')) {
       // For Docker, we need to modify the container command
       const dockerCommand = claudeCmd + ` ${flags}`;
-      command = `echo '${this.escapeShellString(prompt)}' | ${dockerCommand}`;
+      command = `${dockerCommand} < "${tempFile}"`;
     }
     // Handle bash -c wrapped commands
     else if (claudeCmd.includes('bash -c')) {
-      command = `echo '${this.escapeShellString(prompt)}' | ${claudeCmd.replace('"claude"', `"claude ${flags}"`)}`;
+      command = `${claudeCmd.replace('"claude"', `"claude ${flags}"`)} < "${tempFile}"`;
     }
     // Handle regular commands
     else {
-      command = `echo '${this.escapeShellString(prompt)}' | ${claudeCmd} ${flags}`;
+      command = `"${claudeCmd}" ${flags} < "${tempFile}"`;
     }
 
-    logger.debug('Executing Claude command with session', { 
-      model, 
-      promptLength: prompt.length, 
+    logger.debug('Executing Claude command with session', {
+      model,
+      promptLength: prompt.length,
       sessionId,
       useJsonOutput,
+      hasSystemPrompt: !!systemPrompt,
       isDocker: claudeCmd.includes('docker') || claudeCmd.includes('podman')
     });
-    
+
     try {
-      const { stdout, stderr } = await execAsync(command, { 
+      const { stdout, stderr } = await execAsync(command, {
         maxBuffer: 1024 * 1024 * 10,
         timeout: config.timeout
       });
-      
+
       if (stderr && stderr.trim()) {
         logger.warn('Claude CLI warning', { stderr: stderr.trim() });
       }
-      
+
       logger.debug('Claude command completed successfully');
       return stdout.trim();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Claude CLI execution failed', error as Error);
-      
+
       if (errorMessage.includes('timeout')) {
         throw new TimeoutError(`Claude CLI execution timed out after ${config.timeout}ms`);
       }
-      
+
       throw new ClaudeCliError(`Claude CLI execution failed: ${errorMessage}`);
+    } finally {
+      await fs.promises.unlink(tempFile).catch(() => {});
+      if (systemPromptFile) {
+        await fs.promises.unlink(systemPromptFile).catch(() => {});
+      }
     }
   }
 
@@ -229,7 +266,4 @@ export class ClaudeResolver implements IClaudeResolver {
     }
   }
 
-  private escapeShellString(str: string): string {
-    return str.replace(/'/g, "'\"'\"'");
-  }
 }

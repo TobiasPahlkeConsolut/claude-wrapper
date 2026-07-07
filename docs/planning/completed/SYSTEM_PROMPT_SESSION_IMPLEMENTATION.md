@@ -1,5 +1,23 @@
 # System Prompt Session Optimization Implementation Plan
 
+> ⚠️ **Superseded — this design was implemented, then removed.** It added a
+> second, sequential `claude` CLI call (session setup via `--resume`) before
+> every new/changed system prompt could be answered. That assumption turned
+> out to be wrong: IDE clients (VS Code, etc.) already resend the full
+> message history on every request, so the "avoid resending history" premise
+> here didn't hold — the extra round trip was pure overhead. It also had a
+> real bug: the Claude session was keyed only by a hash of the system prompt
+> text, so two unrelated conversations sharing the same system prompt would
+> collide onto the same underlying Claude session and leak context between
+> them.
+>
+> The current design (`CoreWrapper.handleChatCompletion` in
+> `app/src/core/wrapper.ts`) makes exactly one stateless `claude` CLI call per
+> request: the system prompt goes through `--system-prompt-file`, the full
+> message history goes via stdin, and there is no server-side Claude session
+> state at all. This cut typical request latency roughly in half and removed
+> the cross-conversation leak. Kept below for historical context only.
+
 ## Request Processing Flow
 
 ### Scenario 1: First Request with System Prompt

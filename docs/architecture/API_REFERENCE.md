@@ -29,7 +29,7 @@ Create a chat completion using Claude Code CLI.
 **Request Body:**
 ```json
 {
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-opus-4-8",
   "messages": [
     {
       "role": "user",
@@ -48,7 +48,7 @@ Create a chat completion using Claude Code CLI.
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
   "created": 1677652288,
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-opus-4-8",
   "choices": [
     {
       "index": 0,
@@ -71,7 +71,7 @@ Create a chat completion using Claude Code CLI.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `model` | string | Yes | Model identifier (e.g., "claude-3-5-sonnet-20241022") |
+| `model` | string | Yes | Model identifier (e.g., "claude-opus-4-8") |
 | `messages` | array | Yes | Array of conversation messages |
 | `max_tokens` | integer | No | Maximum tokens in response (default: 1000) |
 | `temperature` | number | No | Sampling temperature 0-2 (default: 0.7) |
@@ -101,7 +101,7 @@ Create a chat completion using Claude Code CLI.
 **Tool Calls Example:**
 ```json
 {
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-opus-4-8",
   "messages": [
     {
       "role": "user",
@@ -176,10 +176,19 @@ data: [DONE]
 ```
 
 **Streaming Tool Calls:**
-```
-data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-3-5-sonnet-20241022","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-3-5-sonnet-20241022","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"location\""}}]},"finish_reason":null}]}
+Unlike OpenAI, which fragments `function.arguments` across many deltas, this
+wrapper waits for the complete (non-streamed) response and emits the tool
+call as a single, complete delta — most OpenAI-compatible clients accumulate
+`tool_calls` by `index` regardless of how many chunks the data arrives in, so
+this parses identically to a properly fragmented stream:
+
+```
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-opus-4-8","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":"{\"location\":\"San Francisco\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-opus-4-8","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
 ```
 
 ## 🔍 Information Endpoints
@@ -188,28 +197,32 @@ data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652
 
 #### `GET /v1/models`
 
-List available models.
+List available models. Returns the four latest-of-tier aliases (which the
+`claude` CLI resolves to the newest model in that tier) plus pinned full
+model IDs for callers that want an exact version.
 
 **Response:**
 ```json
 {
   "object": "list",
   "data": [
-    {
-      "id": "claude-3-5-sonnet-20241022",
-      "object": "model",
-      "owned_by": "anthropic",
-      "created": 1677652288
-    },
-    {
-      "id": "claude-3-5-haiku-20241022",
-      "object": "model",
-      "owned_by": "anthropic",
-      "created": 1677652288
-    }
+    { "id": "fable", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "opus", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "sonnet", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "haiku", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-fable-5", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-opus-4-8", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-opus-4-7", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-opus-4-6", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-sonnet-5", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic", "created": 1709164800 },
+    { "id": "claude-haiku-4-5", "object": "model", "owned_by": "anthropic", "created": 1709164800 }
   ]
 }
 ```
+
+Update `app/src/api/routes/models.ts` when new models ship — see
+`shared/models.md` in the claude-api skill for current model IDs.
 
 ### **Health Check**
 
@@ -221,8 +234,9 @@ Service health status.
 ```json
 {
   "status": "healthy",
-  "service": "claude-wrapper-poc",
-  "version": "1.0.0",
+  "service": "claude-wrapper",
+  "description": "OpenAI-compatible HTTP API wrapper for Claude Code CLI with Session Management",
+  "version": "1.1.27",
   "timestamp": "2024-01-01T00:00:00Z"
 }
 ```
@@ -388,7 +402,7 @@ All errors follow OpenAI's error format:
 curl -X POST http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-opus-4-8",
     "messages": [
       {"role": "user", "content": "Hello!"}
     ]
@@ -401,7 +415,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
   "created": 1677652288,
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-opus-4-8",
   "choices": [
     {
       "index": 0,
@@ -427,7 +441,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 curl -X POST http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-opus-4-8",
     "messages": [
       {"role": "user", "content": "What is 2+2?"}
     ],
@@ -456,7 +470,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
   "id": "chatcmpl-abc123",
   "object": "chat.completion",
   "created": 1677652288,
-  "model": "claude-3-5-sonnet-20241022",
+  "model": "claude-opus-4-8",
   "choices": [
     {
       "index": 0,
@@ -492,7 +506,7 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 curl -X POST http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "claude-3-5-sonnet-20241022",
+    "model": "claude-opus-4-8",
     "messages": [
       {"role": "user", "content": "Tell me a short story"}
     ],
@@ -502,14 +516,20 @@ curl -X POST http://localhost:3000/v1/chat/completions \
 
 **Response:**
 ```
-data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-3-5-sonnet-20241022","choices":[{"index":0,"delta":{"role":"assistant","content":"Once"},"finish_reason":null}]}
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-opus-4-8","choices":[{"index":0,"delta":{"role":"assistant","content":"Once"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-3-5-sonnet-20241022","choices":[{"index":0,"delta":{"content":" upon"},"finish_reason":null}]}
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-opus-4-8","choices":[{"index":0,"delta":{"content":" upon"},"finish_reason":null}]}
 
-data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-3-5-sonnet-20241022","choices":[{"index":0,"delta":{"content":" a"},"finish_reason":null}]}
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","created":1677652288,"model":"claude-opus-4-8","choices":[{"index":0,"delta":{"content":" a"},"finish_reason":null}]}
 
 data: [DONE]
 ```
+
+## ⏱️ Limits & Timeouts
+
+- **Request body size**: 50MB (IDE clients like VS Code resend full conversation history plus tool schemas on every request, which routinely exceeds Express's 100KB default)
+- **`claude` CLI execution timeout**: 5 minutes per call (Claude Code turns involving reasoning or tool use can legitimately take well over 30 seconds)
+- **Streaming connection ceiling**: 10 minutes (must exceed the CLI timeout above, since the streaming handler waits for one full non-streamed response before chunking it out)
 
 ## 📈 Rate Limiting
 

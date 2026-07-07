@@ -57,6 +57,7 @@ export interface ClaudeRequest {
   model: string;
   messages: OpenAIMessage[];
   tools?: any[];
+  systemPrompt?: string;
 }
 
 // Core Interface Contracts (SOLID Principles)
@@ -68,7 +69,7 @@ export interface IClaudeClient {
 export interface IClaudeResolver {
   findClaudeCommand(): Promise<string>;
   executeClaudeCommand(prompt: string, model: string): Promise<string>;
-  executeClaudeCommandWithSession(prompt: string, model: string, sessionId: string | null, useJsonOutput: boolean): Promise<string>;
+  executeClaudeCommandWithSession(prompt: string, model: string, sessionId: string | null, useJsonOutput: boolean, systemPrompt?: string | null): Promise<string>;
 }
 
 export interface IResponseValidator {
@@ -136,9 +137,20 @@ export interface SessionStats {
 }
 
 // Streaming Types (Phase 4A)
+export interface StreamingToolCallDelta {
+  index: number;
+  id?: string;
+  type?: 'function';
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
 export interface StreamingDelta {
   role?: 'assistant';
-  content?: string;
+  content?: string | null;
+  tool_calls?: StreamingToolCallDelta[];
 }
 
 export interface OpenAIStreamingChoice {
@@ -174,6 +186,7 @@ export interface IStreamingFormatter {
   formatDone(): string;
   formatInitialChunk(requestId: string, model: string): string;
   createContentChunk(requestId: string, model: string, content: string): string;
+  createToolCallsChunk(requestId: string, model: string, toolCalls: OpenAIToolCall[]): string;
   createFinalChunk(requestId: string, model: string, finishReason?: string): string;
 }
 

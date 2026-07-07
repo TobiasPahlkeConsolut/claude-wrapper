@@ -1,7 +1,7 @@
-import { 
-  OpenAIRequest, 
-  OpenAIResponse, 
-  OpenAIMessage, 
+import {
+  OpenAIRequest,
+  OpenAIResponse,
+  OpenAIMessage,
   ClaudeRequest,
   ICoreWrapper,
   IClaudeClient,
@@ -10,25 +10,15 @@ import {
 import { ClaudeClient } from './claude-client';
 import { ResponseValidator } from './validator';
 import { logger } from '../utils/logger';
-import { 
-  API_CONSTANTS, 
-  TEMPLATE_CONSTANTS, 
-  DEFAULT_USAGE 
+import {
+  API_CONSTANTS,
+  TEMPLATE_CONSTANTS,
+  DEFAULT_USAGE
 } from '../config/constants';
-import crypto from 'crypto';
-
-// Claude session state interface
-interface ClaudeSessionState {
-  claudeSessionId: string;
-  systemPromptHash: string;
-  lastUsed: Date;
-  systemPromptContent: string;
-}
 
 export class CoreWrapper implements ICoreWrapper {
   private claudeClient: IClaudeClient;
   private validator: IResponseValidator;
-  private claudeSessions: Map<string, ClaudeSessionState> = new Map();
 
   constructor(claudeClient?: IClaudeClient, validator?: IResponseValidator) {
     this.claudeClient = claudeClient || new ClaudeClient();
@@ -42,184 +32,15 @@ export class CoreWrapper implements ICoreWrapper {
       stream: request.stream
     });
 
-    // Detect if we have a system prompt and check for existing session
-    const sessionInfo = this.detectSystemPromptSession(request.messages);
-    
-    if (sessionInfo.isNewSession) {
-      // Create new Claude session or process normally
-      if (sessionInfo.systemPromptHash) {
-        return this.initializeSystemPromptSession(request, sessionInfo.systemPromptHash);
-      } else {
-        return this.processNormally(request);
-      }
-    } else {
-      // Resume existing Claude session
-      if (sessionInfo.claudeSessionId && sessionInfo.sessionState) {
-        return this.processWithSession(request, sessionInfo.claudeSessionId);
-      } else {
-        // Fallback to normal processing if session data is incomplete
-        return this.processNormally(request);
-      }
-    }
-  }
-
-  private detectSystemPromptSession(messages: OpenAIMessage[]): {
-    isNewSession: boolean;
-    systemPromptHash?: string;
-    claudeSessionId?: string;
-    sessionState?: ClaudeSessionState;
-  } {
-    // Extract system prompts from messages
-    const systemPrompts = this.extractSystemPrompts(messages);
-    
-    if (systemPrompts.length === 0) {
-      // No system prompt - no optimization needed
-      return { isNewSession: true };
-    }
-
-    // Create hash from system prompt content
-    const systemPromptHash = this.getSystemPromptHash(systemPrompts);
-    
-    // Check if we have an existing Claude session for this system prompt
-    const sessionState = this.claudeSessions.get(systemPromptHash);
-    
-    if (sessionState) {
-      logger.debug('Found existing Claude session for system prompt', {
-        systemPromptHash,
-        claudeSessionId: sessionState.claudeSessionId,
-        lastUsed: sessionState.lastUsed
-      });
-      
-      return {
-        isNewSession: false,
-        systemPromptHash,
-        claudeSessionId: sessionState.claudeSessionId,
-        sessionState
-      };
-    }
-
-    // System prompt exists but no Claude session found - need to create session
-    logger.debug('System prompt found but no Claude session exists', {
-      systemPromptHash,
-      systemPromptCount: systemPrompts.length
-    });
-    
-    return { isNewSession: true, systemPromptHash };
-  }
-
-  private extractSystemPrompts(messages: OpenAIMessage[]): OpenAIMessage[] {
-    return messages.filter(msg => msg.role === 'system');
-  }
-
-  private getSystemPromptHash(systemPrompts: OpenAIMessage[]): string {
-    // Create hash from system prompt content only
-    const content = systemPrompts.map(msg => msg.content).join('\n\n');
-    return crypto.createHash('sha256').update(content).digest('hex').substring(0, 16);
-  }
-
-  private stripSystemPrompts(request: OpenAIRequest): OpenAIRequest {
-    const nonSystemMessages = request.messages.filter(msg => msg.role !== 'system');
-    
-    logger.debug('Stripped system prompts from request', {
-      originalMessageCount: request.messages.length,
-      strippedMessageCount: nonSystemMessages.length,
-      systemPromptsRemoved: request.messages.length - nonSystemMessages.length
-    });
-
-    return {
-      ...request,
-      messages: nonSystemMessages
-    };
-  }
-
-  private async initializeSystemPromptSession(request: OpenAIRequest, systemPromptHash: string): Promise<OpenAIResponse> {
-    logger.info('Initializing system prompt session', { systemPromptHash });
-    
-    // Stage 1: Setup system prompt session
-    const systemPrompts = this.extractSystemPrompts(request.messages);
-    const sessionId = await this.createSystemPromptSession(systemPrompts);
-    
-    // Store the session mapping
-    const systemPromptContent = systemPrompts.map(msg => msg.content).join('\n\n');
-    this.claudeSessions.set(systemPromptHash, {
-      claudeSessionId: sessionId,
-      systemPromptHash,
-      lastUsed: new Date(),
-      systemPromptContent
-    });
-    
-    logger.info('Created new Claude session for system prompt', {
-      systemPromptHash,
-      claudeSessionId: sessionId
-    });
-    
-    // Stage 2: Process remaining messages with session
-    return this.processWithSession(request, sessionId);
-  }
-
-  private async createSystemPromptSession(systemPrompts: OpenAIMessage[]): Promise<string> {
-    const systemContent = systemPrompts.map(msg => msg.content).join('\n\n');
-    const setupRequest: ClaudeRequest = {
-      model: 'sonnet',
-      messages: [{ role: 'system' as const, content: systemContent }]
-    };
-    
-    const response = await this.claudeClient.executeWithSession(setupRequest, null, true);
-    const { sessionId } = this.parseClaudeSessionResponse(response);
-    
-    if (!sessionId) {
-      throw new Error('Failed to extract session ID from Claude CLI response');
-    }
-    
-    return sessionId;
-  }
-
-  private async processWithSession(request: OpenAIRequest, sessionId: string): Promise<OpenAIResponse> {
-    logger.info('Processing with existing Claude session', { sessionId });
-    
-    // Strip system prompts and process remaining messages
-    const strippedRequest = this.stripSystemPrompts(request);
-    const claudeRequest = this.addFormatInstructions(strippedRequest);
-    
-    const rawResponse = await this.claudeClient.executeWithSession(
-      claudeRequest, 
-      sessionId, 
-      false // Regular mode, not JSON
-    );
-    
-    // Update session state
-    const sessionHash = this.getSystemPromptHash(this.extractSystemPrompts(request.messages));
-    const sessionState = this.claudeSessions.get(sessionHash);
-    if (sessionState) {
-      sessionState.lastUsed = new Date();
-    }
-    
-    return this.validateAndCorrect(rawResponse, claudeRequest);
-  }
-
-  private async processNormally(request: OpenAIRequest): Promise<OpenAIResponse> {
-    logger.info('Processing without session optimization');
-    
+    // Callers (VS Code, etc.) resend the full message history on every
+    // request, so there's nothing to gain from a stateful Claude CLI session
+    // (`--resume`) - it only added a second full CLI round-trip per turn and,
+    // worse, could bleed context between unrelated conversations that happened
+    // to share the same system prompt. One call, full history, every time.
     const claudeRequest = this.addFormatInstructions(request);
     const rawResponse = await this.claudeClient.execute(claudeRequest);
-    
-    return this.validateAndCorrect(rawResponse, claudeRequest);
-  }
 
-  private parseClaudeSessionResponse(jsonResponse: string): { sessionId: string | null; response: string } {
-    try {
-      const parsed = JSON.parse(jsonResponse);
-      return {
-        sessionId: parsed.session_id || null,
-        response: parsed.result || jsonResponse
-      };
-    } catch (error) {
-      logger.warn('Failed to parse Claude session response as JSON', { error });
-      return {
-        sessionId: null,
-        response: jsonResponse
-      };
-    }
+    return this.validateAndCorrect(rawResponse, claudeRequest);
   }
 
   private addFormatInstructions(request: OpenAIRequest): ClaudeRequest {
@@ -262,54 +83,27 @@ export class CoreWrapper implements ICoreWrapper {
   }
 
   private shouldUseFormatInstructions(request: OpenAIRequest): boolean {
-    // Always use formatting if tools are present
-    if (request.tools && request.tools.length > 0) {
-      return true;
-    }
-
-    // Use formatting for multi-turn conversations (more than 2 messages)
-    if (request.messages.length > 2) {
-      return true;
-    }
-
-    // Use formatting if there's a system message
-    const hasSystemMessage = request.messages.some(msg => msg.role === 'system');
-    if (hasSystemMessage) {
-      return true;
-    }
-
-    // Use formatting for long user messages (likely complex requests)
-    const lastUserMessage = request.messages.filter(msg => msg.role === 'user').pop();
-    if (lastUserMessage && typeof lastUserMessage.content === 'string' && lastUserMessage.content.length > 200) {
-      return true;
-    }
-
-    // Skip formatting for simple single-turn questions
-    return false;
+    // The injected instruction exists for exactly one reason: teaching the
+    // model our minimal {"tool_calls": [...]} convention (see
+    // createFormatTemplate) - Claude answers in plain text by default, so
+    // there's nothing to instruct otherwise for tool-less requests. Adding it
+    // unconditionally (multi-turn, system message present, long message, ...)
+    // only diluted the caller's own system prompt for no behavioral benefit.
+    return !!(request.tools && request.tools.length > 0);
   }
 
-  private createFormatTemplate(requestId: string, timestamp: number, model: string): string {
-    const template = {
-      id: requestId,
-      object: TEMPLATE_CONSTANTS.COMPLETION_OBJECT_TYPE,
-      created: timestamp,
-      model: model,
-      choices: [{
-        index: 0,
-        message: {
-          role: 'assistant',
-          content: 'REPLACE_WITH_ANSWER'
-        },
-        finish_reason: TEMPLATE_CONSTANTS.DEFAULT_FINISH_REASON
-      }],
-      usage: {
-        prompt_tokens: DEFAULT_USAGE.PROMPT_TOKENS,
-        completion_tokens: DEFAULT_USAGE.COMPLETION_TOKENS,
-        total_tokens: DEFAULT_USAGE.TOTAL_TOKENS
-      }
-    };
-
-    return `Return raw JSON only, no formatting: ${JSON.stringify(template)}. Replace REPLACE_WITH_ANSWER with your response. If you need to use tools, populate the tool_calls array instead of content (set content to null). Each tool call should have: {"id": "call_xxx", "type": "function", "function": {"name": "tool_name", "arguments": "json_string"}}.`;
+  private createFormatTemplate(_requestId: string, _timestamp: number, _model: string): string {
+    // Note: deliberately does NOT ask the model to fabricate a full API response
+    // envelope (id/created/usage) or "adopt" an API/tool schema wholesale — Claude
+    // Code (which is what's actually running behind the CLI) treats that framing as
+    // an impersonation/prompt-injection attempt and refuses. Only ask for the
+    // minimal, purpose-specific data; the server fills in id/created/usage itself
+    // in validateAndCorrect().
+    return 'Respond to the message below directly and in plain text — no JSON, ' +
+      'no metadata, no wrapper of any kind, just your answer. ' +
+      'If (and only if) you need to call one of the tools listed above to answer, ' +
+      'respond with nothing but this minimal JSON object (no other text): ' +
+      '{"tool_calls":[{"name":"<tool name>","arguments":{<arguments as an object>}}]}';
   }
 
   private async validateAndCorrect(
@@ -323,6 +117,15 @@ export class CoreWrapper implements ICoreWrapper {
     if (validation.valid) {
       logger.info('Valid response received', { attempt });
       return this.validator.parse(response);
+    }
+
+    // Model was only ever asked for a minimal {"tool_calls": [...]} snippet (see
+    // createFormatTemplate) — not a full envelope — so check for that shape before
+    // falling back to plain text.
+    const toolCallsResponse = this.tryParseMinimalToolCalls(response, originalRequest.model);
+    if (toolCallsResponse) {
+      logger.info('Minimal tool_calls response received', { attempt });
+      return toolCallsResponse;
     }
 
     // Instead of trying to self-correct, wrap non-JSON response in OpenAI format
@@ -357,6 +160,123 @@ export class CoreWrapper implements ICoreWrapper {
     return wrappedResponse;
   }
 
+  /**
+   * Detect the minimal `{"tool_calls": [{"name": ..., "arguments": {...}}]}` shape
+   * the model is asked for in createFormatTemplate, and build a full OpenAI
+   * response envelope around it here rather than asking the model to fabricate
+   * ids/timestamps/usage itself.
+   */
+  private tryParseMinimalToolCalls(response: string, model: string): OpenAIResponse | null {
+    // The model is asked to respond with nothing but the JSON object, but
+    // often prefaces it with a sentence anyway ("I'll check that.\n\n{...}").
+    // Try the whole trimmed string first (the common case), then fall back to
+    // locating the {"tool_calls": ...} object anywhere in the text so partial
+    // non-compliance doesn't silently downgrade a real tool call to plain text.
+    let parsed: any;
+    try {
+      parsed = JSON.parse(response.trim());
+    } catch {
+      const extracted = this.extractToolCallsJson(response);
+      if (!extracted) {
+        return null;
+      }
+      try {
+        parsed = JSON.parse(extracted);
+      } catch {
+        return null;
+      }
+    }
+
+    if (!parsed || !Array.isArray(parsed.tool_calls) || parsed.tool_calls.length === 0) {
+      return null;
+    }
+
+    const toolCalls = parsed.tool_calls
+      .filter((call: any) => call && typeof call.name === 'string')
+      .map((call: any, index: number) => ({
+        id: `call_${Math.random().toString(36).substring(2, 15)}_${index}`,
+        type: 'function' as const,
+        function: {
+          name: call.name,
+          arguments: typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments ?? {})
+        }
+      }));
+
+    if (toolCalls.length === 0) {
+      return null;
+    }
+
+    return {
+      id: this.generateRequestId(),
+      object: TEMPLATE_CONSTANTS.COMPLETION_OBJECT_TYPE,
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: toolCalls
+        },
+        finish_reason: 'tool_calls'
+      }],
+      usage: {
+        prompt_tokens: DEFAULT_USAGE.PROMPT_TOKENS,
+        completion_tokens: DEFAULT_USAGE.COMPLETION_TOKENS,
+        total_tokens: DEFAULT_USAGE.TOTAL_TOKENS
+      }
+    };
+  }
+
+  /**
+   * Locate a `{"tool_calls": [...]}` object embedded anywhere in a larger
+   * string (e.g. after a leading sentence) via brace matching, respecting
+   * string literals so a `}`/`{` inside a quoted argument doesn't end the
+   * scan early. Returns the matched substring, or null if none is found.
+   */
+  private extractToolCallsJson(response: string): string | null {
+    const anchor = response.indexOf('"tool_calls"');
+    if (anchor === -1) {
+      return null;
+    }
+
+    const start = response.lastIndexOf('{', anchor);
+    if (start === -1) {
+      return null;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < response.length; i++) {
+      const char = response[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{') {
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          return response.slice(start, i + 1);
+        }
+      }
+    }
+
+    return null;
+  }
 
   /**
    * Handle streaming chat completion (future enhancement)

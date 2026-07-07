@@ -16,20 +16,24 @@ export class ClaudeClient implements IClaudeClient {
 
   async executeWithSession(request: ClaudeRequest, sessionId: string | null, useJsonOutput: boolean): Promise<string> {
     try {
-      const prompt = this.messagesToPrompt(request.messages, request.tools);
-      logger.debug('Converting messages to prompt', { 
+      const systemPrompt = this.extractSystemPrompt(request.messages, request.systemPrompt);
+      const conversationMessages = request.messages.filter(m => m.role !== 'system');
+      const prompt = this.messagesToPrompt(conversationMessages, request.tools);
+      logger.debug('Converting messages to prompt', {
         messageCount: request.messages.length,
         model: request.model,
         hasTools: !!request.tools,
+        hasSystemPrompt: !!systemPrompt,
         sessionId,
         useJsonOutput
       });
-      
+
       const result = await this.resolver.executeClaudeCommandWithSession(
-        prompt, 
-        request.model, 
-        sessionId, 
-        useJsonOutput
+        prompt,
+        request.model,
+        sessionId,
+        useJsonOutput,
+        systemPrompt
       );
       
       logger.info('Claude execution completed successfully', {
@@ -60,36 +64,71 @@ export class ClaudeClient implements IClaudeClient {
 
   private messagesToPrompt(messages: any[], tools?: any[]): string {
     let prompt = '';
-    
+
     // Add tools if provided
     if (tools && tools.length > 0) {
       prompt += `Available tools: ${JSON.stringify(tools)}\n\n`;
     }
-    
+
     for (const message of messages) {
-      // Ensure content is properly serialized to string
-      const content = typeof message.content === 'string' 
-        ? message.content 
-        : typeof message.content === 'object'
-        ? JSON.stringify(message.content)
-        : String(message.content);
-      
-      // Send raw content without prefixes to save tokens
-      if (message.role === 'system') {
-        prompt += `${content}\n\n`;
-      } else if (message.role === 'user') {
-        prompt += `${content}\n\n`;
+      if (message.role === 'user') {
+        prompt += `${this.stringifyContent(message.content)}\n\n`;
       } else if (message.role === 'assistant') {
-        prompt += `${content}\n\n`;
+        // A tool-call turn has content: null and the actual info in
+        // tool_calls - without this branch, typeof null === 'object' made
+        // this render as the literal text "null", erasing all evidence that
+        // a tool was ever called. With no session/history on Claude's side
+        // (every call is stateless), that left it with no way to know it had
+        // already asked for this tool, so it just asked again - forever.
+        if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+          const calls = message.tool_calls
+            .map((call: any) => `${call.function?.name}(${call.function?.arguments})`)
+            .join(', ');
+          prompt += `[You already requested this tool call: ${calls}]\n\n`;
+        } else {
+          prompt += `${this.stringifyContent(message.content)}\n\n`;
+        }
+      } else if (message.role === 'tool') {
+        // The actual tool result - previously dropped entirely, which was
+        // the other half of why the model kept re-requesting the same call
+        // instead of using the result it was already given.
+        prompt += `[Result of the tool call above]: ${this.stringifyContent(message.content)}\n\n`;
       }
     }
-    
-    logger.debug('Converted messages to prompt', { 
+
+    logger.debug('Converted messages to prompt', {
       promptLength: prompt.length,
       messageCount: messages.length,
       toolCount: tools?.length || 0
     });
-    
+
     return prompt;
+  }
+
+  private stringifyContent(content: unknown): string {
+    if (content === null || content === undefined) {
+      return '';
+    }
+    if (typeof content === 'string') {
+      return content;
+    }
+    return JSON.stringify(content);
+  }
+
+  /**
+   * Combine any explicit systemPrompt with 'system'-role messages into a
+   * single string for --system-prompt-file, instead of flattening system
+   * content into the piped conversation text. Sending it as a real system
+   * prompt is both correct (it replaces Claude Code's own default identity
+   * instead of fighting it) and required for it not to be treated as an
+   * embedded persona-override / impersonation attempt.
+   */
+  private extractSystemPrompt(messages: any[], explicitSystemPrompt?: string): string | undefined {
+    const systemMessages = messages
+      .filter(m => m.role === 'system')
+      .map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
+
+    const parts = explicitSystemPrompt ? [explicitSystemPrompt, ...systemMessages] : systemMessages;
+    return parts.length > 0 ? parts.join('\n\n') : undefined;
   }
 }

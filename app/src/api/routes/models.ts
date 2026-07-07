@@ -4,10 +4,25 @@ import { logger } from '../../utils/logger';
 
 const router = Router();
 
-// Working Claude models
+// Claude models available via the `claude` CLI's --model flag.
+// Short aliases (fable/opus/sonnet/haiku) resolve to the latest model in that
+// tier; the full IDs let a caller pin an exact version. Keep in sync with
+// shared/models.md in the claude-api skill when new models ship.
 const CLAUDE_MODELS = [
+  // Latest-of-tier aliases
+  { id: 'fable', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'opus', object: 'model', owned_by: 'anthropic', created: 1709164800 },
   { id: 'sonnet', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'opus', object: 'model', owned_by: 'anthropic', created: 1709164800 }
+  { id: 'haiku', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+
+  // Pinned full model IDs
+  { id: 'claude-fable-5', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'claude-opus-4-8', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'claude-opus-4-7', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'claude-opus-4-6', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'claude-sonnet-5', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'claude-sonnet-4-6', object: 'model', owned_by: 'anthropic', created: 1709164800 },
+  { id: 'claude-haiku-4-5', object: 'model', owned_by: 'anthropic', created: 1709164800 }
 ];
 
 router.get('/v1/models', asyncHandler(async (_req: Request, res: Response) => {

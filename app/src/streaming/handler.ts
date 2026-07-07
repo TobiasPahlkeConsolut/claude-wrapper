@@ -125,12 +125,22 @@ export class StreamingHandler implements IStreamingHandler {
       const fullResponse = await this.coreWrapper.handleChatCompletion(nonStreamingRequest);
       logger.debug('Streaming: handleChatCompletion completed', { requestId });
 
-      // Extract content and stream it in chunks
-      const content = fullResponse.choices[0]?.message?.content || '';
-      yield* this.chunkContent(requestId, request.model, content);
-      
-      // Send final chunk
-      yield this.formatter.createFinalChunk(requestId, request.model);
+      const message = fullResponse.choices[0]?.message;
+      const toolCalls = message?.tool_calls;
+
+      if (toolCalls && toolCalls.length > 0) {
+        // Tool calls are emitted as one complete delta rather than fragmented
+        // text chunks - dropping them here (as chunkContent would, since
+        // content is null on a tool_calls message) silently discarded every
+        // tool call and left the caller re-sending the same request forever.
+        yield this.formatter.createToolCallsChunk(requestId, request.model, toolCalls);
+        yield this.formatter.createFinalChunk(requestId, request.model, fullResponse.choices[0]!.finish_reason);
+      } else {
+        const content = message?.content || '';
+        yield* this.chunkContent(requestId, request.model, content);
+        yield this.formatter.createFinalChunk(requestId, request.model);
+      }
+
       yield this.formatter.formatDone();
 
     } catch (error) {

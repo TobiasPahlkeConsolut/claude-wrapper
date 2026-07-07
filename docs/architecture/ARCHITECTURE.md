@@ -95,20 +95,24 @@ class ClaudeWrapper {
 }
 ```
 
-#### **Template-Based Solutions**
+#### **Server Builds the Envelope, Not the Model**
 ```typescript
-// ✅ POC's proven template approach
+// ❌ Originally tried: ask the model to fabricate the whole response envelope
 const formatInstruction = {
   role: 'system',
   content: `Return raw JSON only: {"id":"${requestId}","object":"chat.completion",...}`
 };
+// Claude Code (which is what actually runs behind the CLI) treats being asked
+// to fabricate ids/timestamps/usage and "become" a different API's schema as
+// an impersonation/prompt-injection attempt, and refuses instead of complying.
 
-// ❌ Complex parser approach
-class ResponseParser {
-  parse(response: string): OpenAIResponse {
-    // Complex parsing logic with multiple stages
-  }
-}
+// ✅ Current approach: only ask for the minimal, purpose-specific data;
+// the server fills in id/created/usage itself (CoreWrapper.validateAndCorrect)
+const formatInstruction = {
+  role: 'system',
+  content: 'Respond in plain text. If calling a tool, respond with nothing ' +
+    'but {"tool_calls":[{"name":"...","arguments":{...}}]}'
+};
 ```
 
 ## 🏛️ Architecture Layers

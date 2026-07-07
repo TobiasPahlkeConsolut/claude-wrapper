@@ -1,7 +1,9 @@
 // API Constants (from POC requirements)
 export const API_CONSTANTS = {
   DEFAULT_PORT: 8000,
-  DEFAULT_TIMEOUT: 30000,
+  // Claude Code CLI turns (reasoning, tool use, session setup) routinely run
+  // well past 30s - that was killing the child process mid-response.
+  DEFAULT_TIMEOUT: 300000,
   MAX_VALIDATION_ATTEMPTS: 3,
   DEFAULT_REQUEST_ID_PREFIX: 'chatcmpl-',
 } as const;
@@ -51,7 +53,10 @@ export const DEFAULT_USAGE = {
 export const STREAMING_CONFIG = {
   CHUNK_TIMEOUT_MS: 100,
   FIRST_CHUNK_TIMEOUT_MS: 500,
-  CONNECTION_TIMEOUT_MS: 30000,
+  // Must stay above API_CONSTANTS.DEFAULT_TIMEOUT - createStreamingResponse
+  // awaits one full (non-streamed) Claude CLI call before chunking it out, so
+  // this connection has to outlive that whole call, not just typical SSE idle time.
+  CONNECTION_TIMEOUT_MS: 600000,
   HEARTBEAT_INTERVAL_MS: 10000,
   MAX_CHUNK_SIZE: 4096,
   BUFFER_HIGH_WATER_MARK: 16384,

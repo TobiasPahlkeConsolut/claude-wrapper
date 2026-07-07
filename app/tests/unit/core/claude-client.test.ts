@@ -38,11 +38,12 @@ describe('ClaudeClient', () => {
         expect.stringContaining('Hello, how are you?'),
         'claude-3-5-sonnet-20241022',
         null,
-        false
+        false,
+        undefined
       );
     });
 
-    it('should convert messages to proper prompt format', async () => {
+    it('should convert messages to proper prompt format, extracting the system message separately', async () => {
       const mockResponse = 'Mock response';
       mockResolver.executeClaudeCommandWithSession.mockResolvedValue(mockResponse);
 
@@ -58,9 +59,13 @@ describe('ClaudeClient', () => {
 
       await claudeClient.execute(requestWithMultipleMessages);
 
-      const capturedPrompt = mockResolver.executeClaudeCommandWithSession.mock.calls[0]![0]!
-      
-      expect(capturedPrompt).toContain('You are a helpful assistant.');
+      const call = mockResolver.executeClaudeCommandWithSession.mock.calls[0]!;
+      const capturedPrompt = call[0]!;
+      const capturedSystemPrompt = call[4];
+
+      // System content goes to --system-prompt-file (the 5th arg), not the piped prompt
+      expect(capturedSystemPrompt).toBe('You are a helpful assistant.');
+      expect(capturedPrompt).not.toContain('You are a helpful assistant.');
       expect(capturedPrompt).toContain('Hello!');
       expect(capturedPrompt).toContain('Hi there!');
       expect(capturedPrompt).toContain('How are you?');
@@ -82,7 +87,7 @@ describe('ClaudeClient', () => {
       await expect(claudeClient.execute(mockRequest)).rejects.toThrow('Claude CLI execution failed: Some other error');
     });
 
-    it('should handle messages with different roles correctly', async () => {
+    it('should include tool result messages in the prompt', async () => {
       mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
 
       const requestWithToolMessage: ClaudeRequest = {
@@ -96,10 +101,41 @@ describe('ClaudeClient', () => {
       await claudeClient.execute(requestWithToolMessage);
 
       const capturedPrompt = mockResolver.executeClaudeCommandWithSession.mock.calls[0]![0]!
-      
-      // Tool messages should be ignored in the prompt conversion
+
+      // Without the tool's result in the prompt, Claude has no way to know
+      // it already called the tool and gets stuck re-requesting it forever.
       expect(capturedPrompt).toContain('Use this tool');
-      expect(capturedPrompt).not.toContain('Tool result');
+      expect(capturedPrompt).toContain('Tool result');
+    });
+
+    it('should render an assistant tool_calls turn as text instead of the literal word "null"', async () => {
+      mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
+
+      const requestWithToolCallTurn: ClaudeRequest = {
+        model: 'claude-3-5-sonnet-20241022',
+        messages: [
+          { role: 'user', content: 'What is the weather in Paris?' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_123',
+              type: 'function',
+              function: { name: 'get_weather', arguments: '{"location":"Paris"}' }
+            }]
+          },
+          { role: 'tool', content: 'Sunny, 20C', tool_call_id: 'call_123' }
+        ]
+      };
+
+      await claudeClient.execute(requestWithToolCallTurn);
+
+      const capturedPrompt = mockResolver.executeClaudeCommandWithSession.mock.calls[0]![0]!
+
+      expect(capturedPrompt).toContain('get_weather');
+      expect(capturedPrompt).toContain('Sunny, 20C');
+      // typeof null === 'object' previously made this stringify to "null"
+      expect(capturedPrompt).not.toMatch(/^null$/m);
     });
 
     it('should generate correct prompt structure', async () => {
