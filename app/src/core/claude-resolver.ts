@@ -398,11 +398,27 @@ export class ClaudeResolver implements IClaudeResolver {
   }
 
   private mapUsage(u: any): OpenAIUsage {
-    const promptTokens =
-      (u.input_tokens || 0) +
-      (u.cache_read_input_tokens || 0) +
-      (u.cache_creation_input_tokens || 0);
+    const cacheReadTokens = u.cache_read_input_tokens || 0;
+    const cacheCreationTokens = u.cache_creation_input_tokens || 0;
+    const uncachedInputTokens = u.input_tokens || 0;
+    const promptTokens = uncachedInputTokens + cacheReadTokens + cacheCreationTokens;
     const completionTokens = u.output_tokens || 0;
+
+    // Prompt-cache visibility. The Claude CLI caches a stable prompt prefix and
+    // reports how much of this turn's input it served from cache. A healthy hit
+    // ratio across a conversation means the prefix (system prompt, tools, earlier
+    // turns) is staying byte-stable; a persistent 0 across similar requests means
+    // something at the front of the prompt is churning per-request and busting
+    // the cache. (Expected 0 on the first turn - that request writes the cache.)
+    if (promptTokens > 0) {
+      logger.debug('Claude prompt-cache usage', {
+        cacheReadTokens,
+        cacheCreationTokens,
+        uncachedInputTokens,
+        cacheHitRatio: Number((cacheReadTokens / promptTokens).toFixed(3)),
+      });
+    }
+
     return {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,

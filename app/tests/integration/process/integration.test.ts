@@ -13,6 +13,30 @@ import { ProcessManager } from '../../../src/process/manager';
 import { PidManager } from '../../../src/process/pid';
 import { DaemonManager } from '../../../src/process/daemon';
 
+/**
+ * Find a PID that is definitely not running, so liveness assertions are
+ * deterministic across platforms. A hard-coded value (e.g. 12345) can collide
+ * with a live process — especially on Windows, where low PIDs are readily in
+ * use — and isProcessRunning() then reports it as running, breaking the
+ * "stale PID gets cleaned up" assertion. Scan downward for a PID whose
+ * `kill(pid, 0)` probe reports ESRCH ("no such process"); EPERM means the
+ * process exists but is unsignalable, so skip it and keep looking.
+ */
+function findDeadPid(): number {
+  for (let candidate = 999_999; candidate > 1; candidate--) {
+    try {
+      process.kill(candidate, 0);
+      // No throw → the process exists → keep looking.
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ESRCH') {
+        return candidate;
+      }
+      // EPERM (exists but unsignalable) or anything else → keep looking.
+    }
+  }
+  throw new Error('Unable to find a non-running PID for the test');
+}
+
 describe('Process Integration Tests', () => {
   let processManager: ProcessManager;
   let pidManager: PidManager;
@@ -157,12 +181,13 @@ describe('Process Integration Tests', () => {
     test('should integrate PID manager with process manager', () => {
       // Process manager should use the injected PID manager
       expect(processManager.isRunning()).toBe(false);
-      
-      // Create a test PID file through the PID manager
-      pidManager.savePid(12345);
-      
-      // Process manager should now see it as potentially running
-      // (though it will validate and clean up since process 12345 doesn't exist)
+
+      // Create a test PID file pointing at a process that is definitely dead.
+      const deadPid = findDeadPid();
+      pidManager.savePid(deadPid);
+
+      // Process manager should now see it as potentially running, then validate
+      // and clean up since that process doesn't exist.
       const wasRunning = processManager.isRunning();
       expect(wasRunning).toBe(false); // Should be false after validation
       

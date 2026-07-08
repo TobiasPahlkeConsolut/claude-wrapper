@@ -4,9 +4,9 @@
 [![Platform Support](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/TobiasPahlkeConsolut/claude-wrapper)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-**OpenAI-compatible HTTP API wrapper for Claude Code CLI with Session Management**
+**OpenAI-compatible HTTP API wrapper for Claude Code CLI**
 
-Transform your Claude Code CLI into a powerful HTTP API server with intelligent session management, streaming responses, and OpenAI-compatible tool calling.
+Transform your Claude Code CLI into a powerful HTTP API server with real streaming responses and OpenAI-compatible tool calling. Every request is a single, self-contained call to the `claude` CLI — the wrapper holds no conversation state between requests (clients resend the full message history, as OpenAI clients already do).
 
 ## 🛠️ Tools-First Philosophy
 
@@ -26,6 +26,7 @@ This approach gives you **maximum flexibility** with Claude's tool capabilities.
 - **Secure by Default**: Binds to `127.0.0.1` (loopback) only, validates the requested model against an allowlist, and keeps `/logs` behind authentication
 - **MCP Tools Support**: Full compatibility with OpenAI MCP tools and function calling — tool execution stays on the client side, this wrapper never runs tools itself
 - **Latest Models**: Exposes the current Claude model lineup both as generic aliases (`fable`, `opus`, `sonnet`, `haiku`) and pinned versions via `/v1/models`
+- **Prompt-Cache Friendly**: Feeds the `claude` CLI a byte-stable prompt prefix (deterministic tool ordering, frozen system prompt) so the CLI's automatic prompt caching hits across turns — repeated context is served from cache at a fraction of the cost and latency. Cache hit rates are logged at debug level (see [Prompt Caching](#-prompt-caching))
 
 ## ✅ Prerequisites
 
@@ -175,17 +176,14 @@ wrapper -k my-secure-key           # shorthand
 
 | Method   | Endpoint                    | Description                                   |
 | -------- | --------------------------- | --------------------------------------------- |
-| `POST`   | `/v1/chat/completions`      | Main chat completions with session support    |
+| `POST`   | `/v1/chat/completions`      | Main chat completions endpoint (stateless — one CLI call per request) |
 | `GET`    | `/v1/models`                | List available Claude models (Fable 5, Opus, Sonnet, Haiku — aliases and pinned versions) |
-| `GET`    | `/v1/sessions`              | List all active sessions                      |
-| `GET`    | `/v1/sessions/stats`        | Get session statistics                        |
-| `GET`    | `/v1/sessions/:id`          | Get specific session details                  |
-| `DELETE` | `/v1/sessions/:id`          | Delete a specific session                     |
-| `POST`   | `/v1/sessions/:id/messages` | Add messages to a session                     |
 | `GET`    | `/v1/auth/status`           | Check authentication configuration and status |
 | `GET`    | `/health`                   | Service health check                          |
 | `GET`    | `/docs`                     | Swagger UI                                    |
 | `GET`    | `/swagger.json`             | OpenAPI 3.0 specification JSON schema         |
+
+> The server also mounts a set of `/v1/sessions` routes backed by an in-memory store. These are a legacy/experimental surface: chat completions do **not** read from or write to it, so they are not needed for normal use and are omitted above.
 
 ## 🚀 CLI Usage
 
@@ -220,6 +218,34 @@ wrapper -t                         # shorthand
 wrapper --stop
 wrapper -s                         # shorthand
 ```
+
+## ⚡ Prompt Caching
+
+The wrapper drives `claude --print`; it does **not** call the Anthropic API directly. Prompt caching therefore happens one layer down, *inside* the Claude CLI, which caches a stable prompt **prefix** and reuses it on later requests — serving repeated context (system prompt, tool definitions, earlier turns) at roughly 10% of the normal input cost and with much lower latency.
+
+Because caching is a pure prefix match, **any byte change in the prefix invalidates everything after it.** The wrapper can't place cache breakpoints or set a TTL (those need direct API access), but it can — and does — feed the CLI a byte-stable prefix so those cache reads actually land:
+
+- **Deterministic tool serialization** — the `Available tools:` preamble sits at the very front of the prompt. Tools are sorted by name and their JSON keys are sorted recursively, so two requests carrying the same tools in a different order produce identical bytes instead of silently busting the cache every turn.
+- **Frozen system prompt** — the caller's system prompt is written verbatim to a file and passed via `--system-prompt-file`, with nothing volatile (timestamps, request IDs) injected ahead of it.
+
+This is naturally effective for OpenAI clients (VS Code, etc.), which resend the same system prompt and a growing message history on every request.
+
+### Observing cache hits
+
+Cache usage is logged at **debug** level. Enable it with `wrapper --debug` (foreground) or `LOG_LEVEL=debug`, then drive a multi-turn conversation and watch for:
+
+```
+[DEBUG] Claude prompt-cache usage {
+  cacheReadTokens: 8213,       // input served from cache this turn (~0.1x cost)
+  cacheCreationTokens: 0,      // input written to cache this turn (~1.25x cost)
+  uncachedInputTokens: 142,    // input processed at full price
+  cacheHitRatio: 0.983         // cacheReadTokens / total prompt tokens
+}
+```
+
+- **First turn:** `cacheHitRatio` near `0` with a large `cacheCreationTokens` — expected; that request *writes* the cache.
+- **Later turns (within the ~5-minute cache TTL):** the ratio should climb well above 0 as most input is served from cache.
+- **Persistent `0` across similar requests:** something at the front of the prompt is changing per-request and busting the cache — worth investigating.
 
 ## 🧩 Using with VS Code (GitHub Copilot)
 

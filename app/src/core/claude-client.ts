@@ -101,9 +101,17 @@ export class ClaudeClient implements IClaudeClient {
   private messagesToPrompt(messages: any[], tools?: any[]): string {
     let prompt = '';
 
-    // Add tools if provided
+    // Add tools if provided. This preamble sits at the very front of the piped
+    // prompt, ahead of the whole conversation, so it becomes part of the prefix
+    // the Claude CLI's prompt cache keys on. A raw JSON.stringify preserves
+    // whatever tool order / object-key order the client happened to send, so two
+    // otherwise-identical requests whose tools differ only in order would emit
+    // different bytes here and silently bust the cache for the entire request,
+    // every turn. Canonicalizing (tools sorted by name, keys sorted recursively)
+    // keeps this prefix byte-stable across requests; tool order carries no
+    // meaning to the model, so sorting is safe.
     if (tools && tools.length > 0) {
-      prompt += `Available tools: ${JSON.stringify(tools)}\n\n`;
+      prompt += `Available tools: ${this.canonicalizeTools(tools)}\n\n`;
     }
 
     for (const message of messages) {
@@ -139,6 +147,47 @@ export class ClaudeClient implements IClaudeClient {
     });
 
     return prompt;
+  }
+
+  /**
+   * Serialize tool definitions to a byte-stable string, independent of the order
+   * the client sent the tools in or the key order within each tool object. See
+   * messagesToPrompt for why this matters (prompt-cache prefix stability).
+   */
+  private canonicalizeTools(tools: any[]): string {
+    const sorted = [...tools].sort((a, b) => {
+      const an = this.toolName(a);
+      const bn = this.toolName(b);
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+    return this.stableStringify(sorted);
+  }
+
+  private toolName(tool: any): string {
+    return (tool && (tool.function?.name ?? tool.name)) || '';
+  }
+
+  /**
+   * JSON.stringify with object keys sorted recursively, so equivalent objects
+   * always serialize to identical bytes. Array order is preserved (it can be
+   * semantically meaningful) - callers sort arrays themselves where a canonical
+   * order is wanted. Inputs come from the parsed request body (pure JSON values),
+   * but undefined is handled defensively to match JSON.stringify semantics.
+   */
+  private stableStringify(value: any): string {
+    if (value === undefined) {
+      return 'null';
+    }
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+      return `[${value.map((v) => this.stableStringify(v)).join(',')}]`;
+    }
+    const keys = Object.keys(value)
+      .filter((k) => value[k] !== undefined)
+      .sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${this.stableStringify(value[k])}`).join(',')}}`;
   }
 
   private stringifyContent(content: unknown): string {

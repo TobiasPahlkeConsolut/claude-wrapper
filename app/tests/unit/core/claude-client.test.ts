@@ -149,4 +149,41 @@ describe('ClaudeClient', () => {
       expect(capturedPrompt).toMatch(/Hello, how are you\?/);
     });
   });
+
+  describe('tool serialization (prompt-cache stability)', () => {
+    // The "Available tools:" preamble sits at the front of the piped prompt and
+    // is part of the prefix the Claude CLI's prompt cache keys on. It must be
+    // byte-identical for the same tools however the client happened to order
+    // them (or their keys), or every request silently busts the cache.
+    const toolsLine = (callIndex: number): string => {
+      const prompt = mockResolver.executeClaudeCommandWithSession.mock.calls[callIndex]![0]!;
+      return prompt.split('\n')[0]!;
+    };
+
+    beforeEach(() => {
+      mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
+    });
+
+    it('serializes the same tools identically regardless of array order', async () => {
+      const toolA = { type: 'function', function: { name: 'a_tool', description: 'A', parameters: { type: 'object' } } };
+      const toolB = { type: 'function', function: { name: 'b_tool', description: 'B', parameters: { type: 'object' } } };
+
+      await claudeClient.execute({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [toolA, toolB] } as ClaudeRequest);
+      await claudeClient.execute({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [toolB, toolA] } as ClaudeRequest);
+
+      expect(toolsLine(0)).toBe(toolsLine(1));
+      expect(toolsLine(0)).toContain('a_tool');
+      expect(toolsLine(0)).toContain('b_tool');
+    });
+
+    it('serializes the same tool identically regardless of object-key order', async () => {
+      const canonical = { type: 'function', function: { name: 'x', description: 'd', parameters: { type: 'object' } } };
+      const shuffled = { function: { parameters: { type: 'object' }, name: 'x', description: 'd' }, type: 'function' };
+
+      await claudeClient.execute({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [canonical] } as ClaudeRequest);
+      await claudeClient.execute({ model: 'm', messages: [{ role: 'user', content: 'hi' }], tools: [shuffled] } as ClaudeRequest);
+
+      expect(toolsLine(0)).toBe(toolsLine(1));
+    });
+  });
 });
