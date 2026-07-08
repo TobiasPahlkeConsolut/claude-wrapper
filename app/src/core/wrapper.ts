@@ -10,7 +10,7 @@ import {
 import { ClaudeClient } from './claude-client';
 import { ResponseValidator } from './validator';
 import { logger } from '../utils/logger';
-import { ClaudeStreamEvent } from '../types';
+import { ClaudeStreamEvent, OpenAIUsage } from '../types';
 import {
   API_CONSTANTS,
   TEMPLATE_CONSTANTS,
@@ -188,11 +188,29 @@ export class CoreWrapper implements ICoreWrapper {
       }
     }
 
-    if (!parsed || !Array.isArray(parsed.tool_calls) || parsed.tool_calls.length === 0) {
+    // The model is asked for the {"tool_calls":[...]} envelope, but in practice
+    // it produces several near-misses that all mean "call this tool". Accept
+    // them all rather than leaking a real tool call out as plain text:
+    //   {"tool_calls":[{name,arguments}]}   - the requested envelope
+    //   {"name":...,"arguments":{...}}        - a single bare call object
+    //   [{name,arguments}, ...]               - a bare array of calls
+    // ...and within each entry, tolerate the OpenAI-native `function` nesting
+    // ({function:{name,arguments}}) as well as name/arguments at the top level.
+    let rawCalls: any[] | null = null;
+    if (parsed && Array.isArray(parsed.tool_calls)) {
+      rawCalls = parsed.tool_calls;
+    } else if (Array.isArray(parsed)) {
+      rawCalls = parsed;
+    } else if (parsed && (typeof parsed.name === 'string' || parsed.function)) {
+      rawCalls = [parsed];
+    }
+
+    if (!rawCalls || rawCalls.length === 0) {
       return null;
     }
 
-    const toolCalls = parsed.tool_calls
+    const toolCalls = rawCalls
+      .map((call: any) => (call && call.function ? call.function : call))
       .filter((call: any) => call && typeof call.name === 'string')
       .map((call: any, index: number) => ({
         id: `call_${Math.random().toString(36).substring(2, 15)}_${index}`,
@@ -285,18 +303,25 @@ export class CoreWrapper implements ICoreWrapper {
    * Tool-less requests stream straight through: each text delta is forwarded as
    * it arrives.
    *
-   * Tool-carrying requests use a first-token sniff so they can stream too. The
+   * Tool-carrying requests are buffered in full before anything is emitted. The
    * model is instructed (see createFormatTemplate) to answer in plain text OR
-   * reply with nothing but a `{"tool_calls":[...]}` object. So we buffer only
-   * until the first non-whitespace character:
-   *   - '{'  → treat as a tool call: keep accumulating silently, then parse the
-   *            complete text into a tool_calls event at the end.
-   *   - else → stream: flush what we've buffered and forward every later delta
-   *            as text, exactly like the tool-less path.
-   * This gives real token-by-token streaming for ordinary answers (the common
-   * case for an IDE that always sends a tools array) while still round-tripping
-   * genuine tool calls. The only cost: a plain answer that happens to start with
-   * '{' is buffered and emitted at once (rare, and still correct).
+   * reply with a `{"tool_calls":[...]}` object, but in practice it narrates
+   * first ("Now let me activate the object.\n\n{...}") - and in a multi-step
+   * agent turn that narration can run for many lines before the JSON arrives. A
+   * tool call must never leak to the client as visible text, and once a text
+   * chunk has been streamed it cannot be retracted, so there is no safe point to
+   * commit to "this is plain text" mid-stream (an earlier first-char sniff and a
+   * length-threshold sniff both leaked real tool calls this way). We therefore
+   * accumulate the whole response, then let tryParseMinimalToolCalls find a
+   * tool_calls object anywhere in it (bare, wrapped, fenced, or prose-prefixed)
+   * and emit it as a real tool call; if there is none, the buffered text is
+   * emitted as-is.
+   *
+   * Cost: tool-carrying requests are delivered when complete rather than token
+   * by token. Plain chat (no tools) still streams live via the early return
+   * above. For an IDE agent - where every request carries tools and a single
+   * leaked tool call breaks the whole loop - reliable tool detection is worth
+   * far more than intra-response streaming.
    */
   async *streamChatCompletion(request: OpenAIRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
     logger.info('Processing streaming chat completion', {
@@ -317,49 +342,33 @@ export class CoreWrapper implements ICoreWrapper {
     }
 
     let buffer = '';
-    let decision: 'pending' | 'text' | 'tool' = 'pending';
+    let finishReason: 'stop' | 'length' | 'tool_calls' = 'stop';
+    let usage: OpenAIUsage | undefined;
 
     for await (const event of this.claudeClient.executeStreaming(claudeRequest)) {
       if (event.type === 'text') {
-        if (decision === 'text') {
-          // Already streaming as text - forward directly.
-          yield { type: 'text', text: event.text };
-          continue;
-        }
-
-        buffer += event.text;
-        if (decision === 'pending') {
-          const trimmed = buffer.replace(/^\s+/, '');
-          if (trimmed.length === 0) {
-            continue; // still only whitespace - keep waiting for a real character
-          }
-          if (trimmed[0] === '{') {
-            decision = 'tool'; // keep accumulating silently until 'done'
-          } else {
-            decision = 'text';
-            yield { type: 'text', text: buffer }; // flush everything buffered so far
-            buffer = '';
-          }
-        }
+        buffer += event.text; // accumulate silently - never emit text mid-stream
       } else if (event.type === 'done') {
-        if (decision === 'tool') {
-          const toolResponse = this.tryParseMinimalToolCalls(buffer, request.model);
-          const toolCalls = toolResponse?.choices[0]?.message?.tool_calls;
-          if (toolCalls && toolCalls.length > 0) {
-            yield { type: 'tool_calls', toolCalls };
-            yield { type: 'done', finishReason: 'tool_calls', ...(event.usage && { usage: event.usage }) };
-            return;
-          }
-          // Started with '{' but wasn't a valid tool_calls object - emit as text.
-          yield { type: 'text', text: buffer };
-        } else if (decision === 'pending' && buffer) {
-          // Whole response was whitespace-only; emit it so nothing is lost.
-          yield { type: 'text', text: buffer };
-        }
-        yield { type: 'done', finishReason: event.finishReason, ...(event.usage && { usage: event.usage }) };
-        return;
+        finishReason = event.finishReason;
+        usage = event.usage;
       }
     }
+
+    // Whole response in hand: pull out a tool call if there is one anywhere in
+    // it (tryParseMinimalToolCalls handles bare/wrapped/fenced/prose-prefixed
+    // shapes), otherwise deliver the buffered text.
+    const toolResponse = this.tryParseMinimalToolCalls(buffer, request.model);
+    const toolCalls = toolResponse?.choices[0]?.message?.tool_calls;
+    if (toolCalls && toolCalls.length > 0) {
+      yield { type: 'tool_calls', toolCalls };
+      yield { type: 'done', finishReason: 'tool_calls', ...(usage && { usage }) };
+      return;
+    }
+
+    if (buffer) {
+      yield { type: 'text', text: buffer };
+    }
+    yield { type: 'done', finishReason, ...(usage && { usage }) };
   }
 
   private generateRequestId(): string {

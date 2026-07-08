@@ -88,7 +88,14 @@ export class StreamingManager implements IStreamingManager {
         this.connectionTimeouts.delete(id);
       }
       
-      if (connection.response && !connection.response.headersSent) {
+      // End the underlying HTTP response so the socket actually closes. The
+      // guard is `!writableEnded`, NOT `!headersSent`: an SSE stream ALWAYS has
+      // its headers sent up front (writeHead in the handler), so a headersSent
+      // check would be permanently false and .end() would never run - leaving
+      // the connection open until the client gives up (a curl that hangs after
+      // `[DONE]`). We skip only if the response was already ended, to avoid a
+      // double-end.
+      if (connection.response && !connection.response.writableEnded) {
         try {
           connection.response.end();
         } catch (error) {

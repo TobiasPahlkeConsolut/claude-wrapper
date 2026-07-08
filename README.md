@@ -22,7 +22,7 @@ This approach gives you **maximum flexibility** with Claude's tool capabilities.
 
 - **OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
 - **Stateless by Design**: Every request is a single, self-contained call to the `claude` CLI — no server-side session state to get out of sync, no double round-trips for system prompts
-- **Real Token-by-Token Streaming**: Server-Sent Events stream the model's output as it is produced (via the CLI's `stream-json` mode), including tool calls, with accurate token-usage reporting
+- **Real Token-by-Token Streaming**: Server-Sent Events stream plain-text answers as they are produced (via the CLI's `stream-json` mode), with accurate token-usage reporting. Tool-calling requests are buffered in full and the tool call is returned as a single `tool_calls` chunk, so it is detected reliably however the model formats it (bare JSON, wrapped in a fence, or after a prose preamble)
 - **Secure by Default**: Binds to `127.0.0.1` (loopback) only, validates the requested model against an allowlist, and keeps `/logs` behind authentication
 - **MCP Tools Support**: Full compatibility with OpenAI MCP tools and function calling — tool execution stays on the client side, this wrapper never runs tools itself
 - **Latest Models**: Exposes the current Claude model lineup both as generic aliases (`fable`, `opus`, `sonnet`, `haiku`) and pinned versions via `/v1/models`

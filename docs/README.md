@@ -6,7 +6,7 @@
 
 **OpenAI-compatible HTTP API wrapper for Claude Code CLI**
 
-Transform your Claude Code CLI into a powerful HTTP API server that accepts OpenAI Chat Completions requests. Every request is a single, stateless call to the `claude` CLI — full conversation history and system prompt in, one answer out — with real token-by-token streaming (including tool calls), an OpenAI-compatible tools workflow, and comprehensive CLI tooling.
+Transform your Claude Code CLI into a powerful HTTP API server that accepts OpenAI Chat Completions requests. Every request is a single, stateless call to the `claude` CLI — full conversation history and system prompt in, one answer out — with real token-by-token streaming for plain-text answers (tool calls are buffered and returned as a single `tool_calls` chunk), an OpenAI-compatible tools workflow, and comprehensive CLI tooling.
 
 ## Table of Contents
 
@@ -44,7 +44,7 @@ This approach gives you maximum flexibility with Claude's tool capabilities.
 
 - **🔌 OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
 - **⚡ Stateless & Fast**: One `claude` CLI call per request — no server-side session state, no double round-trips for system prompts
-- **🌊 Real Token-by-Token Streaming**: Server-Sent Events stream the model's output as it is produced (via the CLI's `stream-json` mode), including tool calls, with accurate token-usage reporting
+- **🌊 Real Token-by-Token Streaming**: Server-Sent Events stream plain-text answers as they are produced (via the CLI's `stream-json` mode), with accurate token-usage reporting. Tool-calling requests are buffered in full and the tool call is returned as a single `tool_calls` chunk, so it is detected reliably however the model formats it
 - **🛡️ Secure by Default**: Binds to `127.0.0.1` (loopback) only, validates the requested model against an allowlist, and keeps `/logs` behind authentication
 - **🔍 Auto-Detection**: Automatically finds the Claude CLI across common installation methods (npm global install, `where`/`which`, shell aliases, or the `CLAUDE_COMMAND` environment variable)
 - **🔑 API Protection**: Optional bearer token authentication for endpoint security
@@ -443,7 +443,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 - **Client-Side Execution**: Tools execute in your local environment
 - **OpenAI Standard**: Uses OpenAI `tools` array specification
 - **Multi-Tool Support**: Multiple tools in single response with orchestration
-- **Streaming Tool Calls**: Real-time tool call streaming support
+- **Reliable Tool Calls Over SSE**: tool-calling requests are buffered and the call is emitted as a single `tool_calls` chunk
 
 ## Streaming
 
@@ -464,7 +464,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 - **Real Token-by-Token Streaming**: The wrapper spawns the CLI with `--output-format stream-json --include-partial-messages` and forwards each text delta as it is produced — output appears incrementally rather than all at once. (First-token latency is still bounded by the CLI's own cold start plus the model's time-to-first-token, typically a few seconds.)
 - **Accurate Usage**: The final streamed chunk carries the real `usage` token counts reported by the CLI.
-- **Tool Calls While Streaming**: Requests that include a `tools` array stream too. The wrapper watches the first non-whitespace character — a `{` means the model is emitting the `tool_calls` JSON convention (buffered and sent as one `tool_calls` chunk), anything else streams as plain text.
+- **Tool Calls While Streaming**: Requests that include a `tools` array are buffered in full rather than streamed token-by-token. The model is asked to answer in plain text OR emit the `tool_calls` JSON convention, but in practice it often precedes the JSON with a markdown fence or a sentence of narration ("Now let me activate the object.\n\n{...}") — and once a text chunk has been streamed it can't be retracted, so there is no safe point to commit to "this is plain text" mid-stream. The wrapper therefore accumulates the whole response and then either emits the tool call as a single `tool_calls` chunk (found anywhere in the text — bare, wrapped, fenced, or prose-prefixed) or returns the buffered text. Plain chat requests (no `tools`) still stream incrementally.
 - **Connection Management**: Active connection tracking and cleanup
 - **Error Streaming**: Error responses through streaming connections
 
@@ -642,7 +642,7 @@ This uses the generic aliases so you always follow the latest model per tier:
 - To pin an exact version, use a pinned id (e.g. `"id": "claude-sonnet-5"`). Aliases and pinned ids can be mixed in the same list.
 - If you enabled API-key protection, supply the key in your Copilot provider configuration so requests carry `Authorization: Bearer <key>`.
 - `vision` is `false`: the wrapper sends the conversation to the CLI as text, so image inputs are not supported.
-- Copilot always sends a `tools` array; thanks to the first-token sniff (see [Streaming](#streaming)), those requests still stream token-by-token unless the model actually returns a tool call.
+- Copilot always sends a `tools` array, so those requests are buffered in full and returned when complete (see [Streaming](#streaming)) — plain chat without tools still streams token-by-token. This keeps tool calls reliable regardless of how the model formats them, at the cost of intra-response streaming on tool-carrying turns.
 
 ## Production Features
 
@@ -676,7 +676,7 @@ This uses the generic aliases so you always follow the latest model per tier:
 - **✅ Production CLI interface** with global installation
 - **✅ Background service architecture** with proper daemon management
 - **✅ Loopback-only binding by default** (`HOST=0.0.0.0` to opt into LAN exposure) with model-allowlist validation and authenticated `/logs`
-- **✅ Real token-by-token streaming** with Server-Sent Events, including tool calls and accurate usage reporting
+- **✅ Real token-by-token streaming** with Server-Sent Events for plain-text answers, plus reliable tool-call detection (tool-carrying requests are buffered and returned as a single `tool_calls` chunk) and accurate usage reporting
 - **✅ Comprehensive test suite**
 
 ## License

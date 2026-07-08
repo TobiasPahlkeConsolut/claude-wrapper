@@ -229,6 +229,50 @@ describe('API Integration Tests', () => {
       });
     });
 
+    it('should accept an assistant tool-call turn with content: null (tool round-trip)', async () => {
+      // Regression: clients (VS Code, etc.) resend the assistant tool-call turn
+      // - which has content: null per the OpenAI spec - alongside the tool
+      // result on the next request. Validation must not 400 this.
+      const mockResponse = {
+        id: 'chatcmpl-tool',
+        object: 'chat.completion' as const,
+        created: 1677652288,
+        model: 'claude-sonnet-5',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant' as const, content: 'Done.' },
+          finish_reason: 'stop' as const
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+      };
+      mockHandleChatCompletion.mockResolvedValue(mockResponse);
+
+      const requestBody = {
+        model: 'claude-sonnet-5',
+        messages: [
+          { role: 'user', content: 'Edit the file' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'replace_string_in_file', arguments: '{"filePath":"a.txt"}' }
+            }]
+          },
+          { role: 'tool', tool_call_id: 'call_1', content: 'ok' }
+        ]
+      };
+
+      const response = await request(app)
+        .post('/v1/chat/completions')
+        .send(requestBody)
+        .expect(200);
+
+      expect(response.body).toEqual(mockResponse);
+      expect(mockHandleChatCompletion).toHaveBeenCalledWith(requestBody);
+    });
+
     it('should handle internal errors gracefully', async () => {
       mockHandleChatCompletion.mockRejectedValue(new Error('Internal processing error'));
 

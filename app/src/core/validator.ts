@@ -72,7 +72,14 @@ export class ResponseValidator implements IResponseValidator {
 
     } catch (parseError) {
       const errorMessage = `Invalid JSON: ${parseError}`;
-      logger.error('JSON parsing failed', parseError as Error);
+      // Not an error: Claude answers in plain text by default, so a non-JSON
+      // response is the common, expected case. The caller (validateAndCorrect)
+      // handles it by wrapping the text in an OpenAI envelope. Logging it at
+      // ERROR level produced a scary stack trace on every ordinary plain-text
+      // reply, so this is a debug-level detail, not a failure.
+      logger.debug('Response is not JSON; caller will wrap it as plain text', {
+        error: parseError instanceof Error ? parseError.message : String(parseError)
+      });
       return {
         valid: false,
         errors: [errorMessage]

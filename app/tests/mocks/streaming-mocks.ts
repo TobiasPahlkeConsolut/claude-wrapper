@@ -15,7 +15,12 @@ import {
  * Mock Express Response for streaming tests
  */
 export class MockExpressResponse {
+  // Mirrors real Express/Node semantics: headers flush (headersSent = true) as
+  // soon as writeHead/write is called, and writableEnded flips only on end().
+  // The old mock left headersSent false until end(), which inverted reality and
+  // hid a bug where StreamingManager guarded end() on !headersSent.
   public headersSent = false;
+  public writableEnded = false;
   public headers: { [key: string]: string } = {};
   public statusCode = 200;
   public chunks: string[] = [];
@@ -24,14 +29,17 @@ export class MockExpressResponse {
   writeHead(statusCode: number, headers: { [key: string]: string }) {
     this.statusCode = statusCode;
     this.headers = { ...headers };
+    this.headersSent = true;
   }
 
   write(chunk: string) {
+    this.headersSent = true;
     this.chunks.push(chunk);
   }
 
   end() {
     this.headersSent = true;
+    this.writableEnded = true;
     this.emit('finish');
   }
 

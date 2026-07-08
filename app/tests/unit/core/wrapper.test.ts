@@ -244,6 +244,41 @@ describe('CoreWrapper', () => {
       }));
     });
 
+    it('should parse a bare {name, arguments} object (no tool_calls wrapper) as a tool call', async () => {
+      // Regression: the model sometimes emits just the inner call object rather
+      // than the {"tool_calls":[...]} envelope it's asked for. This must still
+      // be recognized as a tool call, not leaked to the client as text.
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Edit the file' }],
+        tools: [
+          { type: 'function', function: { name: 'replace_string_in_file', description: 'Edit a file' } }
+        ]
+      };
+
+      ClaudeClientMock.setDefaultResponse(
+        '{"name":"replace_string_in_file","arguments":{"filePath":"a.txt","oldString":"x","newString":"y"}}'
+      );
+      ValidatorMock.setValidationAsValid(false);
+
+      const result = await wrapper.handleChatCompletion(request);
+
+      expect(result).toEqual(expect.objectContaining({
+        choices: [expect.objectContaining({
+          message: expect.objectContaining({
+            content: null,
+            tool_calls: [expect.objectContaining({
+              function: expect.objectContaining({
+                name: 'replace_string_in_file',
+                arguments: '{"filePath":"a.txt","oldString":"x","newString":"y"}'
+              })
+            })]
+          }),
+          finish_reason: 'tool_calls'
+        })]
+      }));
+    });
+
     it('should treat a response with no tool_calls array as plain text', async () => {
       const request: OpenAIRequest = {
         model: 'sonnet',
@@ -438,6 +473,151 @@ describe('CoreWrapper', () => {
       expect(toolEvent).toBeDefined();
       expect(toolEvent?.toolCalls[0]?.function?.name).toBe('get_weather');
       // The raw JSON must NOT have been streamed as visible text
+      expect(events.some(e => e.type === 'text')).toBe(false);
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
+      );
+    });
+
+    it('should emit a tool_calls event for a bare {name, arguments} object, not leak it as text', async () => {
+      // Regression for the VS Code case: a real tool call arrived as a bare
+      // object and was being streamed to the client as visible JSON text
+      // instead of being executed. It must surface as a tool_calls event.
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Edit the file' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'replace_string_in_file', parameters: {} } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse(
+        '{"name":"replace_string_in_file","arguments":{"filePath":"a.txt","oldString":"x","newString":"y"}}'
+      );
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      const toolEvent = events.find(e => e.type === 'tool_calls') as { type: 'tool_calls'; toolCalls: any[] } | undefined;
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent?.toolCalls[0]?.function?.name).toBe('replace_string_in_file');
+      // The raw JSON must NOT have been streamed as visible text
+      expect(events.some(e => e.type === 'text')).toBe(false);
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
+      );
+    });
+
+    it('should emit a tool_calls event when the JSON is wrapped in a ```json markdown fence', async () => {
+      // Regression: the model prefaced the tool_calls JSON with a code fence, so
+      // the response did not start with '{'. The old first-char sniff streamed
+      // the whole thing (fence + JSON) as visible text instead of executing it.
+      const request: OpenAIRequest = {
+        model: 'opus',
+        messages: [{ role: 'user', content: 'Edit the file' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'replace_string_in_file', parameters: {} } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse(
+        '```json\n{"tool_calls":[{"name":"replace_string_in_file","arguments":{"filePath":"a.txt"}}]}\n```'
+      );
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      const toolEvent = events.find(e => e.type === 'tool_calls') as { type: 'tool_calls'; toolCalls: any[] } | undefined;
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent?.toolCalls[0]?.function?.name).toBe('replace_string_in_file');
+      expect(events.some(e => e.type === 'text')).toBe(false);
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
+      );
+    });
+
+    it('should emit a tool_calls event when the model prefaces the JSON with prose', async () => {
+      // Regression: a short sentence before the JSON meant the response did not
+      // start with '{', so the old sniff misclassified the tool call as text.
+      const request: OpenAIRequest = {
+        model: 'opus',
+        messages: [{ role: 'user', content: 'Edit the file' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'replace_string_in_file', parameters: {} } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse(
+        'I\'ll apply that edit now.\n\n{"tool_calls":[{"name":"replace_string_in_file","arguments":{"filePath":"a.txt"}}]}'
+      );
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      const toolEvent = events.find(e => e.type === 'tool_calls') as { type: 'tool_calls'; toolCalls: any[] } | undefined;
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent?.toolCalls[0]?.function?.name).toBe('replace_string_in_file');
+      expect(events.some(e => e.type === 'text')).toBe(false);
+    });
+
+    it('should still stream a genuine plain-text answer as text when tools are present', async () => {
+      // Guard against over-eager tool detection: a plain answer with no tool-call
+      // signal must be delivered as text, never as a tool_calls event.
+      const request: OpenAIRequest = {
+        model: 'opus',
+        messages: [{ role: 'user', content: 'What does this view do?' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'replace_string_in_file', parameters: {} } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse(
+        'This CDS view selects production version data from table mkal and exposes it with SAP standard field names. It does not modify anything.'
+      );
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+      const text = events.filter(e => e.type === 'text').map((e: any) => e.text).join('');
+      expect(text).toContain('CDS view');
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'stop' })
+      );
+    });
+
+    it('should emit a tool_calls event even after a long multi-line narration precedes the JSON', async () => {
+      // Regression for the VS Code multi-step agent case: the model narrated at
+      // length about what it had done, THEN emitted the tool call. A length-based
+      // sniff committed to "text" during the narration and leaked the tool call.
+      // Full buffering must find the tool_calls object no matter how long the
+      // preamble runs. Mirrors the exact call the user saw leak (activate object).
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Now activate it' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'mcp_adt_mcp_serve_abap_activate_objects', parameters: {} } }]
+      };
+
+      const longNarration = 'I have applied all of the requested field renames to the CDS view. '.repeat(12);
+      ClaudeClientMock.setDefaultResponse(
+        `${longNarration}\n\nNow let me activate the object.\n\n` +
+        '{"tool_calls":[{"name":"mcp_adt_mcp_serve_abap_activate_objects","arguments":{"uris":["/sap/bc/adt/ddic/ddl/sources/z_i_tp_test"]}}]}'
+      );
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      expect(longNarration.length).toBeGreaterThan(400); // preamble exceeds the old threshold
+      const toolEvent = events.find(e => e.type === 'tool_calls') as { type: 'tool_calls'; toolCalls: any[] } | undefined;
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent?.toolCalls[0]?.function?.name).toBe('mcp_adt_mcp_serve_abap_activate_objects');
       expect(events.some(e => e.type === 'text')).toBe(false);
       expect(events[events.length - 1]).toEqual(
         expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
