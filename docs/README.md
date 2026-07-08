@@ -1,10 +1,8 @@
 # Claude Wrapper - Complete Documentation
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/claude-wrapper.svg)](https://nodejs.org/en/download/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
-[![GitHub Stars](https://img.shields.io/github/stars/ChrisColeTech/claude-wrapper.svg)](https://github.com/ChrisColeTech/claude-wrapper/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/ChrisColeTech/claude-wrapper.svg)](https://github.com/ChrisColeTech/claude-wrapper/issues)
+[![GitHub Issues](https://img.shields.io/github/issues/TobiasPahlkeConsolut/claude-wrapper.svg)](https://github.com/TobiasPahlkeConsolut/claude-wrapper/issues)
 
 **OpenAI-compatible HTTP API wrapper for Claude Code CLI**
 
@@ -58,15 +56,19 @@ This approach gives you maximum flexibility with Claude's tool capabilities.
 ### Global Installation (Recommended)
 
 ```bash
-# Install globally from npm
-npm install -g claude-wrapper
+# Clone, build, and link the CLI globally
+git clone https://github.com/TobiasPahlkeConsolut/claude-wrapper.git
+cd claude-wrapper
+npm install
+npm run build
+cd app && npm link
 ```
 
 ### Local Development
 
 ```bash
 # Clone and setup for development
-git clone https://github.com/ChrisColeTech/claude-wrapper.git
+git clone https://github.com/TobiasPahlkeConsolut/claude-wrapper.git
 cd claude-wrapper
 npm install
 npm run build

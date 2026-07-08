@@ -38,27 +38,18 @@ claude-wrapper --help              # Get real help output with ALL flags and opt
 
 ## Step 4: Document the Installation Method
 
-This package IS published to npm via CI/CD on the release branch:
+This package is NOT published to npm. Install it by cloning and building from source:
 
 ```markdown
 ## Installation
 
 ```bash
-# Install globally from npm
-npm install -g claude-wrapper
-```
-
-### Development Installation
-
-For development or contributing:
-
-```bash
 # Clone repository (use REAL repo URL from git remote -v)
-git clone https://github.com/ChrisColeTech/claude-wrapper.git
+git clone https://github.com/TobiasPahlkeConsolut/claude-wrapper.git
 cd claude-wrapper
 npm install
 npm run build
-npm install -g .
+cd app && npm link
 ```
 
 **CRITICAL**: Always use the real repository URL from `git remote -v`, never fake URLs.
@@ -199,12 +190,11 @@ Brief description from package.json
 ## Key Rules
 
 1. **GET REAL REPOSITORY URL** - Use `git remote -v`, not fake URLs
-2. **TEST THE ACTUAL CLI** - Run `claude-wrapper --help` for real output  
-3. **CHECK IF PUBLISHED** - Use `npm view claude-wrapper` to check if on npm
-4. **COPY EXACT HELP OUTPUT** - Don't paraphrase or assume CLI options
-5. **TEST EVERY COMMAND** - Before documenting it
-6. **NO ASSUMPTIONS** - If you're not sure, test it
-7. **INCLUDE ALL FLAGS** - Don't remove options that exist in help output
+2. **TEST THE ACTUAL CLI** - Run `claude-wrapper --help` for real output
+3. **COPY EXACT HELP OUTPUT** - Don't paraphrase or assume CLI options
+4. **TEST EVERY COMMAND** - Before documenting it
+5. **NO ASSUMPTIONS** - If you're not sure, test it
+6. **INCLUDE ALL FLAGS** - Don't remove options that exist in help output
 
 ## Step 12: Add Missing Sections
 
@@ -332,7 +322,7 @@ This approach gives you **maximum flexibility** while maintaining **security** -
 
 ✅ **Tools-First Philosophy** - Marketing copy at the top, explaining OpenAI Tools API value
 ✅ **Key Features** - Brief overview after tools philosophy
-✅ **Installation** (npm install -g claude-wrapper)
+✅ **Installation** (clone, build, and `npm link` from source)
 ✅ **Quick Start** with actual interactive prompts shown
 ✅ **CLI Usage Examples** with all flag combinations and real-world scenarios
 ✅ **Authentication Methods** (all 4: Anthropic/Bedrock/Vertex/CLI)
@@ -349,7 +339,7 @@ This approach gives you **maximum flexibility** while maintaining **security** -
 ✅ **Interactive Prompts Shown** - Show the actual API protection prompt users see
 ✅ **Authentication vs API Protection** - Clear distinction between required vs optional
 ✅ **Project Structure Link** - Link to `docs/PROJECT_STRUCTURE.md`, don't make up file trees
-✅ **NPM Badges** - Proper npm, license, Node.js version badges
+✅ **License Badge** - Proper license badge, no npm/CI/PR badges (not published, no CI configured)
 ✅ **OpenAI Tools API Focus** - User-defined functions with client-side execution
 ✅ **Security Emphasis** - Highlight client-side execution, no server-side tool risks
 
