@@ -57,23 +57,76 @@ This approach gives you maximum flexibility with Claude's tool capabilities.
 
 Claude Wrapper is a thin layer over the **Claude Code CLI** — it shells out to the `claude` binary for every request rather than calling the Anthropic API directly. You must install and authenticate the CLI first.
 
-1. **Install the Claude Code CLI** (requires Node.js 18+):
+1. **Install the Claude Code CLI.** Choose one:
+
+   **a) npm (cross-platform, requires Node.js 22+):**
 
    ```bash
    npm install -g @anthropic-ai/claude-code
    ```
 
+   **b) Native install on Windows (PowerShell):** installs a standalone `claude.exe` — no Node.js required for the CLI itself:
+
+   ```powershell
+   irm https://claude.ai/install.ps1 | iex
+   ```
+
+   The native installer places the binary in `%USERPROFILE%\.local\bin` (e.g. `C:\Users\<you>\.local\bin\claude.exe`) and normally adds that folder to your PATH.
+
 2. **Authenticate it** by running `claude` once and completing login (this uses your Claude subscription), or by exporting an `ANTHROPIC_API_KEY`.
 
 3. **Verify** the CLI is available on your `PATH`:
 
-   ```bash
+   ```powershell
    claude --version
    ```
 
 📖 Official Claude Code CLI documentation: <https://docs.claude.com/en/docs/claude-code>
 
 The wrapper resolves the CLI automatically via your `PATH` (npm global install, `where`/`which`, or a shell alias). If `claude` lives somewhere non-standard, set the `CLAUDE_COMMAND` environment variable to its full path. (Docker-based auto-detection was removed to keep startup fast; use `CLAUDE_COMMAND` if you run the CLI through a wrapper script.)
+
+### Adding the CLI to your PATH (Windows PowerShell)
+
+If `claude --version` fails in a fresh terminal with *"command not found"*, the folder containing `claude` isn't on your PATH. This most often happens after an `npm install -g`, because npm's global bin folder isn't always on the PATH by default.
+
+1. **Find the folder** that holds the binary:
+
+   ```powershell
+   # npm global installs land here:
+   npm config get prefix        # e.g. C:\Users\<you>\AppData\Roaming\npm
+   # Native installer instead uses:  %USERPROFILE%\.local\bin
+   ```
+
+2. **Add it to your PowerShell profile** so it's set for every session. `$PROFILE` is the path to your per-user profile script:
+
+   ```powershell
+   # Create the profile file the first time if it doesn't exist yet
+   if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force }
+
+   # Open it in Notepad to edit
+   notepad $PROFILE
+   ```
+
+3. **Add these lines** to the profile, then save. This appends the npm global bin folder (and the native-installer folder) to PATH only if they aren't already present:
+
+   ```powershell
+   # Claude CLI locations
+   $claudePaths = @("$env:APPDATA\npm", "$env:USERPROFILE\.local\bin")
+   foreach ($p in $claudePaths) {
+       if ((Test-Path $p) -and ($env:PATH -notlike "*$p*")) {
+           $env:PATH = "$env:PATH;$p"
+       }
+   }
+   ```
+
+4. **Reload the profile** (or open a new terminal) and verify:
+
+   ```powershell
+   . $PROFILE
+   claude --version
+   ```
+
+> **Scope:** editing `$PROFILE` sets PATH for your PowerShell sessions (including VS Code's integrated PowerShell terminal), which is where you'll run `wrapper`. To make the change apply system-wide (cmd.exe, GUI apps), set it as a persistent user environment variable instead — e.g. `[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path','User'));$env:APPDATA\npm", 'User')` — then restart your terminal.
 
 ## Installation
 
