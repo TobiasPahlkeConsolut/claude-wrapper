@@ -38,12 +38,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/claude-wrapper/claude-wrapper.git"
+    "url": "https://github.com/TobiasPahlkeConsolut/claude-wrapper.git"
   },
   "bugs": {
-    "url": "https://github.com/claude-wrapper/claude-wrapper/issues"
+    "url": "https://github.com/TobiasPahlkeConsolut/claude-wrapper/issues"
   },
-  "homepage": "https://github.com/claude-wrapper/claude-wrapper#readme",
+  "homepage": "https://github.com/TobiasPahlkeConsolut/claude-wrapper#readme",
   "engines": {
     "node": ">=18.0.0"
   },

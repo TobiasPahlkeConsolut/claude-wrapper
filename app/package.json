@@ -14,11 +14,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ChrisColeTech/claude-wrapper.git"
+    "url": "git+https://github.com/TobiasPahlkeConsolut/claude-wrapper.git"
   },
-  "homepage": "https://github.com/ChrisColeTech/claude-wrapper#readme",
+  "homepage": "https://github.com/TobiasPahlkeConsolut/claude-wrapper#readme",
   "bugs": {
-    "url": "https://github.com/ChrisColeTech/claude-wrapper/issues"
+    "url": "https://github.com/TobiasPahlkeConsolut/claude-wrapper/issues"
   },
   "scripts": {
     "build": "tsc > build.log 2>&1",

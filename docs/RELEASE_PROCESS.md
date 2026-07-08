@@ -220,6 +220,6 @@ npm install -g claude-wrapper@1.x.x
 \`\`\`
 
 ## 🔗 Links
-- [Full Changelog](https://github.com/ChrisColeTech/claude-wrapper/compare/v1.x.x-1...v1.x.x)
-- [Documentation](https://github.com/ChrisColeTech/claude-wrapper#readme)
+- [Full Changelog](https://github.com/TobiasPahlkeConsolut/claude-wrapper/compare/v1.x.x-1...v1.x.x)
+- [Documentation](https://github.com/TobiasPahlkeConsolut/claude-wrapper#readme)
 ```
