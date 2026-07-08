@@ -22,10 +22,32 @@ This approach gives you **maximum flexibility** with Claude's tool capabilities.
 
 - **OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
 - **Stateless by Design**: Every request is a single, self-contained call to the `claude` CLI — no server-side session state to get out of sync, no double round-trips for system prompts
-- **Streaming Support**: Real-time response streaming with Server-Sent Events, including tool calls
-- **WSL Integration**: Automatic port forwarding script generation for seamless Windows access
+- **Real Token-by-Token Streaming**: Server-Sent Events stream the model's output as it is produced (via the CLI's `stream-json` mode), including tool calls, with accurate token-usage reporting
+- **Secure by Default**: Binds to `127.0.0.1` (loopback) only, validates the requested model against an allowlist, and keeps `/logs` behind authentication
 - **MCP Tools Support**: Full compatibility with OpenAI MCP tools and function calling — tool execution stays on the client side, this wrapper never runs tools itself
-- **Latest Models**: Exposes the full current Claude model lineup (Fable 5, Opus, Sonnet, Haiku) via `/v1/models`
+- **Latest Models**: Exposes the current Claude model lineup both as generic aliases (`fable`, `opus`, `sonnet`, `haiku`) and pinned versions via `/v1/models`
+
+## ✅ Prerequisites
+
+This wrapper drives the **Claude Code CLI** — it does not talk to the Anthropic API directly. You must have the `claude` CLI installed and authenticated before running the wrapper.
+
+1. **Install the Claude Code CLI** (requires Node.js 18+):
+
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
+2. **Authenticate it** by running `claude` once and completing login (this uses your Claude subscription), or by setting an `ANTHROPIC_API_KEY`.
+
+3. **Verify** it is on your `PATH`:
+
+   ```bash
+   claude --version
+   ```
+
+📖 Official Claude Code CLI documentation: <https://docs.claude.com/en/docs/claude-code>
+
+The wrapper locates the CLI automatically via your `PATH` (npm global install, `where`/`which`, or shell alias). If it lives somewhere unusual, set `CLAUDE_COMMAND` to its full path.
 
 ## 📦 Installation
 
@@ -65,6 +87,8 @@ Would you like to enable API key protection? (y/n):
 ```
 
 Server starts at `http://localhost:8000` - you're ready to make API calls!
+
+> **Networking:** the server binds to `127.0.0.1` (this machine only) by default. To expose it on your LAN — for example a WSL instance you reach from Windows — start it with `HOST=0.0.0.0`, and pair that with API-key protection since the endpoint executes the `claude` CLI.
 
 ## 📋 CLI Options
 
@@ -153,6 +177,66 @@ wrapper -t                         # shorthand
 wrapper --stop
 wrapper -s                         # shorthand
 ```
+
+## 🧩 Using with VS Code (GitHub Copilot)
+
+You can use this wrapper as a custom model provider in VS Code by pointing Copilot's OpenAI-compatible endpoint at `http://localhost:8000/v1/`. The wrapper serves both `/v1/models` (for discovery) and `/v1/chat/completions` (with real streaming).
+
+Add the following to your model configuration. This uses the **generic aliases**, so you automatically follow the latest model in each tier:
+
+```json
+[
+  {
+    "name": "claude-wrapper",
+    "vendor": "customendpoint",
+    "models": [
+      {
+        "id": "fable",
+        "name": "Fable",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "opus",
+        "name": "Opus",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "sonnet",
+        "name": "Sonnet",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "haiku",
+        "name": "Haiku",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 200000,
+        "maxOutputTokens": 64000
+      }
+    ]
+  }
+]
+```
+
+Notes:
+
+- `id` is the value sent to the wrapper (and on to the CLI's `--model`); it must be one of the models listed by `GET /v1/models`. `name` is just the label shown in the VS Code model picker.
+- To pin an exact version instead of following the latest, use a pinned id (e.g. `"id": "claude-sonnet-5"`). You can mix aliases and pinned ids in the same list.
+- If you enabled API-key protection, add your key to the provider configuration as required by your Copilot setup so requests include `Authorization: Bearer <key>`.
+- `vision` is `false` because the wrapper passes the conversation to the CLI as text; image inputs are not supported.
 
 ## 📚 Documentation
 

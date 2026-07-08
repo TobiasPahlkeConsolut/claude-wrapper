@@ -6,12 +6,13 @@
 
 **OpenAI-compatible HTTP API wrapper for Claude Code CLI**
 
-Transform your Claude Code CLI into a powerful HTTP API server that accepts OpenAI Chat Completions requests. Every request is a single, stateless call to the `claude` CLI — full conversation history and system prompt in, one answer out — with WSL integration, streaming responses (including tool calls), and comprehensive CLI tooling.
+Transform your Claude Code CLI into a powerful HTTP API server that accepts OpenAI Chat Completions requests. Every request is a single, stateless call to the `claude` CLI — full conversation history and system prompt in, one answer out — with real token-by-token streaming (including tool calls), an OpenAI-compatible tools workflow, and comprehensive CLI tooling.
 
 ## Table of Contents
 
 - [Tools-First Philosophy](#tools-first-philosophy)
 - [Key Features](#key-features)
+- [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [CLI Options](#cli-options)
 - [API Endpoints](#api-endpoints)
@@ -19,13 +20,14 @@ Transform your Claude Code CLI into a powerful HTTP API server that accepts Open
 - [Quick Start](#quick-start)
 - [CLI Usage](#cli-usage)
 - [Authentication](#authentication)
-- [WSL Integration](#wsl-integration)
+- [Networking & Remote Access](#networking--remote-access)
 - [Request Handling](#request-handling)
 - [Tool Integration](#tool-integration)
 - [Streaming](#streaming)
 - [Configuration](#configuration)
 - [Process Management](#process-management)
 - [Development](#development)
+- [Configuring VS Code (GitHub Copilot)](#configuring-vs-code-github-copilot)
 - [Production Features](#production-features)
 
 ## Tools-First Philosophy
@@ -42,14 +44,36 @@ This approach gives you maximum flexibility with Claude's tool capabilities.
 
 - **🔌 OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
 - **⚡ Stateless & Fast**: One `claude` CLI call per request — no server-side session state, no double round-trips for system prompts
-- **🌊 Streaming Support**: Real-time response streaming with Server-Sent Events, including tool calls
-- **🪟 WSL Integration**: Automatic port forwarding script generation for seamless Windows access
-- **🔍 Auto-Detection**: Automatically finds Claude CLI across different installation methods (npm, Docker, aliases, environment variables)
-- **🛡️ API Protection**: Optional bearer token authentication for endpoint security
+- **🌊 Real Token-by-Token Streaming**: Server-Sent Events stream the model's output as it is produced (via the CLI's `stream-json` mode), including tool calls, with accurate token-usage reporting
+- **🛡️ Secure by Default**: Binds to `127.0.0.1` (loopback) only, validates the requested model against an allowlist, and keeps `/logs` behind authentication
+- **🔍 Auto-Detection**: Automatically finds the Claude CLI across common installation methods (npm global install, `where`/`which`, shell aliases, or the `CLAUDE_COMMAND` environment variable)
+- **🔑 API Protection**: Optional bearer token authentication for endpoint security
 - **🛠️ Client-Owned Tool Calls**: The server never executes tools itself (`--tools ""` / `--safe-mode`) — Claude answers or emits a `tool_calls` response, and your client executes it
 - **🔄 Multi-Tool Support**: Multiple tools in single response with intelligent orchestration
 - **📡 Cross-Platform**: Works across different Claude Code CLI installations
 - **🏗️ Production Ready**: Comprehensive CLI, background services, and monitoring
+
+## Prerequisites
+
+Claude Wrapper is a thin layer over the **Claude Code CLI** — it shells out to the `claude` binary for every request rather than calling the Anthropic API directly. You must install and authenticate the CLI first.
+
+1. **Install the Claude Code CLI** (requires Node.js 18+):
+
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
+2. **Authenticate it** by running `claude` once and completing login (this uses your Claude subscription), or by exporting an `ANTHROPIC_API_KEY`.
+
+3. **Verify** the CLI is available on your `PATH`:
+
+   ```bash
+   claude --version
+   ```
+
+📖 Official Claude Code CLI documentation: <https://docs.claude.com/en/docs/claude-code>
+
+The wrapper resolves the CLI automatically via your `PATH` (npm global install, `where`/`which`, or a shell alias). If `claude` lives somewhere non-standard, set the `CLAUDE_COMMAND` environment variable to its full path. (Docker-based auto-detection was removed to keep startup fast; use `CLAUDE_COMMAND` if you run the CLI through a wrapper script.)
 
 ## Installation
 
@@ -174,7 +198,7 @@ Server starts at `http://localhost:8000` - you're ready to make API calls!
 - Health Check: `http://localhost:8000/health`
 - OpenAPI Spec: `http://localhost:8000/swagger.json`
 
-**🪟 WSL Users:** The CLI automatically detects WSL and provides port forwarding scripts for Windows access!
+**🔒 Networking:** the server binds to `127.0.0.1` (this machine only) by default. To reach it from another host — e.g. Windows reaching a server running inside WSL — start it with `HOST=0.0.0.0` and enable API-key protection (see [Networking & Remote Access](#networking--remote-access)).
 
 ### Alternative Authentication Options
 
@@ -266,62 +290,47 @@ claude-wrapper --version
 claude-wrapper --help
 ```
 
-## WSL Integration
+## Networking & Remote Access
 
-Claude Wrapper includes automatic WSL (Windows Subsystem for Linux) detection and port forwarding script generation for seamless Windows access.
+By default the server binds to `127.0.0.1`, so it is reachable only from the machine it runs on. This is deliberate: each request executes the `claude` CLI, so the endpoint should not be exposed to the network unless you intend it.
 
-### Features
+### Exposing the server
 
-- **🔍 Auto-Detection**: Automatically detects WSL environment and IP address
-- **📝 Script Generation**: Creates Windows batch and PowerShell scripts with correct port/IP
-- **📁 Accessible Storage**: Saves scripts to `C:\claude-wrapper\` for easy access
-- **🔧 Dynamic Configuration**: Works with any port (`-p` flag) automatically
-- **💡 Clear Instructions**: Provides step-by-step guidance for setup
-
-### How It Works
-
-When you run `claude-wrapper` in WSL, it automatically:
-
-1. **Detects WSL Environment** - Identifies WSL and gets the current IP address
-2. **Generates Scripts** - Creates Windows port forwarding scripts with correct settings
-3. **Saves to Windows** - Stores scripts in accessible `C:\claude-wrapper\` location
-4. **Shows File Paths** - Displays Windows file paths for easy navigation
-
-### WSL Output Example
+To listen on all interfaces (LAN / other hosts), set the `HOST` environment variable:
 
 ```bash
-$ claude-wrapper -p 9000
-
-🚀 Claude Wrapper server started in background (PID: 12345)
-
-📡 API Endpoints:
-   POST   http://localhost:9000/v1/chat/completions      - Main chat API
-   GET    http://localhost:9000/v1/models                - List available models
-   ...
-
-🌐 WSL Access (for Windows): http://172.29.125.14:9000
-
-🌉 WSL Port Forwarding Scripts:
-   Batch Script:      C:\claude-wrapper\claude-wrapper-port-9000.bat
-   PowerShell Script: C:\claude-wrapper\claude-wrapper-port-9000.ps1
-
-💡 Open File Explorer, navigate to a script path, and run as Administrator
-🔧 Or copy the path and run from Command Prompt/PowerShell as Administrator
+HOST=0.0.0.0 wrapper -p 8000
 ```
 
-### Setting Up Port Forwarding
+⚠️ When you do this, **enable API-key protection** (`--api-key` or the interactive prompt) — otherwise anyone who can reach the port can run the `claude` CLI through it.
 
-1. **Navigate to Scripts**: Open File Explorer and go to `C:\claude-wrapper\`
-2. **Run as Administrator**: Right-click the script and select "Run as administrator"
-3. **Access Server**: Your Claude Wrapper server is now accessible at `http://localhost:9000`
+### WSL (Windows Subsystem for Linux)
 
-### Manual Port Forwarding
+Automatic WSL port-forwarding script generation has been removed. If you run the wrapper inside WSL and want to reach it from Windows, do it manually:
 
-If you prefer manual setup, use this command in Windows Command Prompt (as Administrator):
+1. Start the wrapper bound to all interfaces inside WSL:
 
-```cmd
-netsh interface portproxy add v4tov4 listenport=9000 listenaddress=0.0.0.0 connectport=9000 connectaddress=172.29.125.14
-```
+   ```bash
+   HOST=0.0.0.0 wrapper -p 8000 --api-key <your-key>
+   ```
+
+2. Find the WSL IP address:
+
+   ```bash
+   hostname -I
+   ```
+
+3. In an **Administrator** Windows terminal, add a port proxy from Windows to the WSL VM:
+
+   ```cmd
+   netsh interface portproxy add v4tov4 listenport=8000 listenaddress=0.0.0.0 connectport=8000 connectaddress=<WSL_IP>
+   ```
+
+   The server is then reachable from Windows at `http://localhost:8000`. Remove the proxy later with:
+
+   ```cmd
+   netsh interface portproxy delete v4tov4 listenport=8000
+   ```
 
 ## Request Handling
 
@@ -400,10 +409,10 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ### Streaming Features
 
-- **Real-Time Response**: Sub-100ms first chunk delivery
+- **Real Token-by-Token Streaming**: The wrapper spawns the CLI with `--output-format stream-json --include-partial-messages` and forwards each text delta as it is produced — output appears incrementally rather than all at once. (First-token latency is still bounded by the CLI's own cold start plus the model's time-to-first-token, typically a few seconds.)
+- **Accurate Usage**: The final streamed chunk carries the real `usage` token counts reported by the CLI.
+- **Tool Calls While Streaming**: Requests that include a `tools` array stream too. The wrapper watches the first non-whitespace character — a `{` means the model is emitting the `tool_calls` JSON convention (buffered and sent as one `tool_calls` chunk), anything else streams as plain text.
 - **Connection Management**: Active connection tracking and cleanup
-- **Heartbeat System**: Configurable connection keep-alive
-- **Timeout Handling**: Configurable timeouts for connections and chunks
 - **Error Streaming**: Error responses through streaming connections
 
 ## Configuration
@@ -431,12 +440,19 @@ SESSION_CLEANUP_INTERVAL=300000  # Cleanup interval in milliseconds (5 minutes)
 SESSION_MESSAGE_LIMIT=100   # Maximum messages per session
 ```
 
+#### Networking
+```bash
+HOST=127.0.0.1              # Interface to bind (default: 127.0.0.1 / loopback only)
+                            # Set HOST=0.0.0.0 to expose on the LAN (enable auth if you do)
+```
+
 #### Streaming
-Streaming behavior (connection ceiling, chunk size, heartbeat interval) is
-currently configured via constants in `app/src/config/constants.ts`
-(`STREAMING_CONFIG`), not environment variables. The connection ceiling is
-10 minutes — it must stay above `TIMEOUT` above, since the streaming handler
-waits for one full non-streamed `claude` response before chunking it out.
+Streaming behavior (connection ceiling, heartbeat interval) is configured via
+constants in `app/src/config/constants.ts` (`STREAMING_CONFIG`), not environment
+variables. The connection ceiling is 10 minutes and must stay above `TIMEOUT`,
+since a streaming connection has to outlive the whole underlying `claude` CLI
+call (plain-text answers stream incrementally; a tool-call response buffers the
+CLI's full output before emitting the `tool_calls` chunk).
 
 ## Process Management
 
@@ -503,6 +519,78 @@ npm run clean            # Clean build artifacts
 - **SOLID Architecture**: Clean code principles with dependency injection
 - **Performance Targets**: <200ms operation targets with monitoring
 
+## Configuring VS Code (GitHub Copilot)
+
+You can register Claude Wrapper as a custom, OpenAI-compatible model provider in VS Code and drive it from GitHub Copilot Chat. Point the provider at `http://localhost:8000/v1/` — the wrapper serves `/v1/models` for discovery and `/v1/chat/completions` with real streaming.
+
+### Available models
+
+`GET /v1/models` returns two kinds of identifiers:
+
+- **Generic aliases** — `fable`, `opus`, `sonnet`, `haiku`. Each resolves to the latest model in that tier, so you get upgrades automatically.
+- **Pinned versions** — e.g. `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5`. These stay fixed to an exact model.
+
+Use whichever you prefer in the `id` field; both are accepted. (Since model validation is enforced, the `id` must be one of the values returned by `/v1/models`.)
+
+### Example configuration (generic aliases)
+
+This uses the generic aliases so you always follow the latest model per tier:
+
+```json
+[
+  {
+    "name": "claude-wrapper",
+    "vendor": "customendpoint",
+    "models": [
+      {
+        "id": "fable",
+        "name": "Fable",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "opus",
+        "name": "Opus",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "sonnet",
+        "name": "Sonnet",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "haiku",
+        "name": "Haiku",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 200000,
+        "maxOutputTokens": 64000
+      }
+    ]
+  }
+]
+```
+
+### Notes
+
+- `id` is sent to the wrapper (and on to the CLI's `--model`); `name` is only the label in the VS Code model picker.
+- To pin an exact version, use a pinned id (e.g. `"id": "claude-sonnet-5"`). Aliases and pinned ids can be mixed in the same list.
+- If you enabled API-key protection, supply the key in your Copilot provider configuration so requests carry `Authorization: Bearer <key>`.
+- `vision` is `false`: the wrapper sends the conversation to the CLI as text, so image inputs are not supported.
+- Copilot always sends a `tools` array; thanks to the first-token sniff (see [Streaming](#streaming)), those requests still stream token-by-token unless the model actually returns a tool call.
+
 ## Production Features
 
 ### Validated Concepts
@@ -524,7 +612,7 @@ npm run clean            # Clean build artifacts
 - **Direct JSON passthrough**
 - **Horizontally scalable** architecture (no shared session state between instances)
 - **Efficient session storage** with automatic cleanup (the separate `/v1/sessions` API, not the request-handling path)
-- **Streaming latency** under 100ms first chunk delivery for the initial role chunk
+- **Incremental streaming** — text deltas are forwarded as the CLI produces them (first-token latency is bounded by the CLI's startup and the model's time-to-first-token)
 
 ## Current Status
 
@@ -534,8 +622,8 @@ npm run clean            # Clean build artifacts
 - **✅ Client-side tool execution** (Claude Code's own tools disabled; MCP integration stays client-side)
 - **✅ Production CLI interface** with global installation
 - **✅ Background service architecture** with proper daemon management
-- **✅ WSL integration** with automatic port forwarding script generation
-- **✅ Real-time streaming** with Server-Sent Events, including tool calls
+- **✅ Loopback-only binding by default** (`HOST=0.0.0.0` to opt into LAN exposure) with model-allowlist validation and authenticated `/logs`
+- **✅ Real token-by-token streaming** with Server-Sent Events, including tool calls and accurate usage reporting
 - **✅ Comprehensive test suite**
 
 ## License
