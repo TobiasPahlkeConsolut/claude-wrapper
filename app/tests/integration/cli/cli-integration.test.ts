@@ -46,9 +46,7 @@ describe('CLI Integration Tests', () => {
         'node', 'cli.js',
         '--port', '3000',
         '--debug',
-        '--api-key', 'test-key-123',
-        '--production',
-        '--health-monitoring'
+        '--api-key', 'test-key-123'
       ];
 
       const result = parser.parseArguments(argv);
@@ -56,9 +54,7 @@ describe('CLI Integration Tests', () => {
       expect(result).toMatchObject({
         port: '3000',
         debug: true,
-        apiKey: 'test-key-123',
-        production: true,
-        healthMonitoring: true
+        apiKey: 'test-key-123'
       });
     });
 

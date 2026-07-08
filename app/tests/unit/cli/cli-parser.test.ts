@@ -89,17 +89,15 @@ describe('CliParser', () => {
 
     it('should handle multiple combined flags', () => {
       const argv = [
-        'node', 'cli.js', 
+        'node', 'cli.js',
         '--port', '3000',
         '--debug',
-        '--production',
         '--api-key', 'test-key'
       ];
       const result = parser.parseArguments(argv);
 
       expect(result.port).toBe('3000');
       expect(result.debug).toBe(true);
-      expect(result.production).toBe(true);
       expect(result.apiKey).toBe('test-key');
     });
   });

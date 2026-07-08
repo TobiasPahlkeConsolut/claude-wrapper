@@ -235,14 +235,16 @@ Service health status.
 {
   "status": "healthy",
   "service": "claude-wrapper",
-  "description": "OpenAI-compatible HTTP API wrapper for Claude Code CLI with Session Management",
+  "description": "OpenAI-compatible HTTP API wrapper for Claude Code CLI",
   "version": "1.1.27",
   "timestamp": "2024-01-01T00:00:00Z"
 }
 ```
 
 
-## 🗂️ Session Management Endpoints (Planned)
+## 🗂️ Session Management Endpoints (Legacy)
+
+> These `/v1/sessions` routes are mounted and backed by an in-memory store, but they are a legacy/experimental surface: `/v1/chat/completions` is stateless and does **not** read from or write to this store. They are documented here for completeness only and are not required for normal use.
 
 ### **List Sessions**
 

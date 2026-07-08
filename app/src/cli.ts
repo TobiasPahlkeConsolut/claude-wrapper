@@ -7,7 +7,7 @@
 
 import { Command } from 'commander';
 import { EnvironmentManager } from './config/env';
-import { logger } from './utils/logger';
+import { logger, LogLevel } from './utils/logger';
 import { interactiveSetup } from './cli/interactive';
 import * as packageJson from '../package.json';
 import { processManager } from './process/manager';
@@ -25,8 +25,6 @@ export interface CliOptions {
   apiKey?: string;
   stop?: boolean;
   status?: boolean;
-  production?: boolean;
-  healthMonitoring?: boolean;
 }
 
 /**
@@ -47,14 +45,11 @@ class CliParser {
     this.program
       .name('wrapper')
       .description(`${packageJson.description}\n\nAvailable commands: 'wrapper' (recommended) or 'claude-wrapper'`)
-      .version(packageJson.version)
+      .version(packageJson.version, '-v, --version', 'output the version number')
       .option('-p, --port <port>', 'port to run server on (default: 8000)')
-      .option('-v, --version', 'output the version number')
-      .option('-d, --debug', 'enable debug mode (runs in foreground)')
+      .option('-d, --debug', 'enable debug mode (runs in foreground with debug logging)')
       .option('-k, --api-key <key>', 'set API key for endpoint protection')
       .option('-n, --no-interactive', 'disable interactive API key setup')
-      .option('-P, --production', 'enable production server management features')
-      .option('-H, --health-monitoring', 'enable health monitoring system')
       .option('-s, --stop', 'stop background server')
       .option('-t, --status', 'check background server status')
       .helpOption('-h, --help', 'display help for command')
@@ -245,6 +240,11 @@ class CliRunner {
     }
     if (options.debug) {
       process.env['DEBUG_MODE'] = 'true';
+      // The logger singleton fixes its level at construction (import time),
+      // before DEBUG_MODE is set here, so it would otherwise stay at INFO and
+      // --debug would emit no debug output. Raise it explicitly so --debug
+      // actually surfaces debug logs (e.g. prompt-cache usage) as documented.
+      logger.setLevel(LogLevel.DEBUG);
     }
 
     // Import and start server directly

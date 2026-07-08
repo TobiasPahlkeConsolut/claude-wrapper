@@ -79,7 +79,7 @@ node app/dist/cli.js 3000               # Start on port 3000
 node app/dist/cli.js --port 3000        # Alternative port syntax
 
 # With options
-node app/dist/cli.js --verbose --debug  # Verbose debug mode
+node app/dist/cli.js --debug            # Debug mode (foreground, debug logging)
 node app/dist/cli.js --no-interactive   # Skip interactive setup
 
 # Daemon mode
@@ -219,14 +219,11 @@ claude-wrapper --no-interactive
 
 ### Development & Debugging
 ```bash
-# Verbose logging
-claude-wrapper --verbose
-
-# Debug mode with verbose
-claude-wrapper --debug --verbose
+# Debug mode (foreground, debug logging)
+claude-wrapper --debug
 
 # Custom port with debugging
-claude-wrapper --port 8080 --debug --verbose
+claude-wrapper --port 8080 --debug
 ```
 
 ### Daemon Mode (Background Server)
@@ -250,7 +247,7 @@ claude-wrapper --stop
 claude-wrapper --port 80 --no-interactive
 
 # Development with debug
-claude-wrapper 8080 --debug --verbose
+claude-wrapper 8080 --debug
 
 # Secure remote server
 claude-wrapper --port 443

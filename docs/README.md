@@ -166,41 +166,34 @@ npm install -g .
 ```bash
 Usage: claude-wrapper [options] [port]
 
-Claude API wrapper with OpenAI compatibility
+OpenAI-compatible HTTP API wrapper for Claude Code CLI
 
 Arguments:
-  port                 port to run server on (default: 8000) - alternative to
-                       --port option
+  port                  port to run server on (default: 8000) - alternative to --port option
 
 Options:
-  -V, --version        output the version number
-  -p, --port <port>    port to run server on (default: 8000)
-  -v, --verbose        enable verbose logging
-  -d, --debug          enable debug mode (runs in foreground)
-  --api-key <key>      set API key for endpoint protection
-  --no-interactive     disable interactive API key setup
-  --production         enable production server management features
-  --health-monitoring  enable health monitoring system
-  --stop               stop background server
-  --status             check background server status
-  -h, --help           display help for command
+  -v, --version         output the version number
+  -p, --port <port>     port to run server on (default: 8000)
+  -d, --debug           enable debug mode (runs in foreground with debug logging)
+  -k, --api-key <key>   set API key for endpoint protection
+  -n, --no-interactive  disable interactive API key setup
+  -s, --stop            stop background server
+  -t, --status          check background server status
+  -h, --help            display help for command
 ```
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/v1/chat/completions` | Main chat completions with session support |
+| `POST` | `/v1/chat/completions` | Main chat completions endpoint (stateless — one CLI call per request) |
 | `GET` | `/v1/models` | List available Claude models (Fable 5, Opus, Sonnet, Haiku — aliases and pinned versions) |
-| `GET` | `/v1/sessions` | List all active sessions |
-| `GET` | `/v1/sessions/stats` | Get session statistics |
-| `GET` | `/v1/sessions/:id` | Get specific session details |
-| `DELETE` | `/v1/sessions/:id` | Delete a specific session |
-| `POST` | `/v1/sessions/:id/messages` | Add messages to a session |
 | `GET` | `/v1/auth/status` | Check authentication configuration and status |
 | `GET` | `/health` | Service health check |
 | `GET` | `/docs` | Swagger UI |
 | `GET` | `/swagger.json` | OpenAPI 3.0 specification JSON schema |
+
+> The server also mounts a set of `/v1/sessions` routes backed by an in-memory store. These are a legacy/experimental surface: chat completions do **not** read from or write to it, so they are not needed for normal use and are omitted above.
 
 ## API Documentation
 
@@ -320,11 +313,8 @@ claude-wrapper
 claude-wrapper 9999
 claude-wrapper --port 8080
 
-# Start with verbose logging
-claude-wrapper --verbose
-
-# Start with debug information (runs in foreground)
-claude-wrapper --debug --verbose
+# Start with debug information (runs in foreground with debug logging)
+claude-wrapper --debug
 ```
 
 ### Managing the Background Service
@@ -484,13 +474,6 @@ LOG_LEVEL=info              # Logging level (debug/info/warn/error)
 ```bash
 API_KEY=your-api-key-here   # API key for endpoint protection
 REQUIRE_API_KEY=true        # Force API key requirement
-```
-
-#### Session Management
-```bash
-SESSION_TTL=3600000         # Session TTL in milliseconds (1 hour)
-SESSION_CLEANUP_INTERVAL=300000  # Cleanup interval in milliseconds (5 minutes)
-SESSION_MESSAGE_LIMIT=100   # Maximum messages per session
 ```
 
 #### Networking

@@ -139,23 +139,20 @@ Server starts at `http://localhost:8000` - you're ready to make API calls!
 ```bash
 Usage: wrapper [options] [port]
 
-Claude API wrapper with OpenAI compatibility
+OpenAI-compatible HTTP API wrapper for Claude Code CLI
 
 Arguments:
-  port                 port to run server on (default: 8000) - alternative to
-                       --port option
+  port                  port to run server on (default: 8000) - alternative to --port option
 
 Options:
-  -v, --version        output the version number
-  -p, --port <port>    port to run server on (default: 8000)
-  -d, --debug          enable debug mode (runs in foreground)
-  -k, --api-key <key>  set API key for endpoint protection
-  -n, --no-interactive disable interactive API key setup
-  -P, --production     enable production server management features
-  -H, --health-monitoring enable health monitoring system
-  -s, --stop           stop background server
-  -t, --status         check background server status
-  -h, --help           display help for command
+  -v, --version         output the version number
+  -p, --port <port>     port to run server on (default: 8000)
+  -d, --debug           enable debug mode (runs in foreground with debug logging)
+  -k, --api-key <key>   set API key for endpoint protection
+  -n, --no-interactive  disable interactive API key setup
+  -s, --stop            stop background server
+  -t, --status          check background server status
+  -h, --help            display help for command
 ```
 
 ### Authentication Options
@@ -232,7 +229,7 @@ This is naturally effective for OpenAI clients (VS Code, etc.), which resend the
 
 ### Observing cache hits
 
-Cache usage is logged at **debug** level. Enable it with `wrapper --debug` (foreground) or `LOG_LEVEL=debug`, then drive a multi-turn conversation and watch for:
+Cache usage is logged at **debug** level. Enable it with `wrapper --debug` (foreground) or by setting `LOG_LEVEL=debug`, then drive a multi-turn conversation and watch for:
 
 ```
 [DEBUG] Claude prompt-cache usage {

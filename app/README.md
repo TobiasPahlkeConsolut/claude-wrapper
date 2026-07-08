@@ -4,9 +4,9 @@
 [![Platform Support](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/TobiasPahlkeConsolut/claude-wrapper)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-**OpenAI-compatible HTTP API wrapper for Claude Code CLI with Session Management**
+**OpenAI-compatible HTTP API wrapper for Claude Code CLI**
 
-Transform your Claude Code CLI into a powerful HTTP API server with intelligent session management, streaming responses, and OpenAI-compatible tool calling.
+Transform your Claude Code CLI into a powerful HTTP API server with real streaming responses and OpenAI-compatible tool calling. Every request is a single, self-contained call to the `claude` CLI — the wrapper holds no conversation state between requests.
 
 ## 🛠️ Tools-First Philosophy
 
@@ -21,7 +21,7 @@ This approach gives you **maximum flexibility** with Claude's tool capabilities.
 ## Key Features
 
 - **OpenAI Compatible**: Drop-in replacement for OpenAI Chat Completions API
-- **Session Management**: Automatic message history accumulation for conversation continuity
+- **Stateless by Design**: Every request is a single, self-contained call to the `claude` CLI — no server-side session state to get out of sync
 - **Streaming Support**: Real-time response streaming with Server-Sent Events
 
 ## 📦 Installation
@@ -68,23 +68,20 @@ Server starts at `http://localhost:8000` - you're ready to make API calls!
 ```bash
 Usage: wrapper [options] [port]
 
-Claude API wrapper with OpenAI compatibility
+OpenAI-compatible HTTP API wrapper for Claude Code CLI
 
 Arguments:
-  port                 port to run server on (default: 8000) - alternative to
-                       --port option
+  port                  port to run server on (default: 8000) - alternative to --port option
 
 Options:
-  -v, --version        output the version number
-  -p, --port <port>    port to run server on (default: 8000)
-  -d, --debug          enable debug mode (runs in foreground)
-  -k, --api-key <key>  set API key for endpoint protection
-  -n, --no-interactive disable interactive API key setup
-  -P, --production     enable production server management features
-  -H, --health-monitoring enable health monitoring system
-  -s, --stop           stop background server
-  -t, --status         check background server status
-  -h, --help           display help for command
+  -v, --version         output the version number
+  -p, --port <port>     port to run server on (default: 8000)
+  -d, --debug           enable debug mode (runs in foreground with debug logging)
+  -k, --api-key <key>   set API key for endpoint protection
+  -n, --no-interactive  disable interactive API key setup
+  -s, --stop            stop background server
+  -t, --status          check background server status
+  -h, --help            display help for command
 ```
 
 ### Authentication Options
@@ -105,13 +102,8 @@ wrapper -k my-secure-key           # shorthand
 
 | Method   | Endpoint                    | Description                                   |
 | -------- | --------------------------- | --------------------------------------------- |
-| `POST`   | `/v1/chat/completions`      | Main chat completions with session support    |
-| `GET`    | `/v1/models`                | List available Claude models (sonnet, opus)   |
-| `GET`    | `/v1/sessions`              | List all active sessions                      |
-| `GET`    | `/v1/sessions/stats`        | Get session statistics                        |
-| `GET`    | `/v1/sessions/:id`          | Get specific session details                  |
-| `DELETE` | `/v1/sessions/:id`          | Delete a specific session                     |
-| `POST`   | `/v1/sessions/:id/messages` | Add messages to a session                     |
+| `POST`   | `/v1/chat/completions`      | Main chat completions endpoint (stateless — one CLI call per request) |
+| `GET`    | `/v1/models`                | List available Claude models (Fable 5, Opus, Sonnet, Haiku) |
 | `GET`    | `/v1/auth/status`           | Check authentication configuration and status |
 | `GET`    | `/health`                   | Service health check                          |
 | `GET`    | `/docs`                     | Swagger UI                                    |
