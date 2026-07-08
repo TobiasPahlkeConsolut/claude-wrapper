@@ -91,11 +91,11 @@ describe('StreamingHandler Core Functionality', () => {
     });
   });
 
-  describe('createStreamingResponse', () => {
+  describe('createStreamingResponse (true streaming, no tools)', () => {
     it('should generate complete streaming response', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
       const mockResponse = testSetup.testDataFactory.createValidResponse();
-      
+
       testSetup.mockCoreWrapper.setMockResponse(mockResponse);
 
       const generator = handler.createStreamingResponse(mockRequest);
@@ -111,33 +111,56 @@ describe('StreamingHandler Core Functionality', () => {
       expect(testSetup.mockFormatter.formatDoneCalls).toBeGreaterThan(0);
     });
 
-    it('should call core wrapper with stream=false', async () => {
+    it('should use the streaming path (not the buffered handleChatCompletion) when there are no tools', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
       const mockResponse = testSetup.testDataFactory.createValidResponse();
-      
+
       testSetup.mockCoreWrapper.setMockResponse(mockResponse);
 
       const generator = handler.createStreamingResponse(mockRequest);
-      const chunks: string[] = [];
+      for await (const _chunk of generator) { /* drain */ }
 
-      for await (const chunk of generator) {
-        chunks.push(chunk);
-      }
+      expect(testSetup.mockCoreWrapper.streamChatCompletionCalls.length).toBe(1);
+      expect(testSetup.mockCoreWrapper.handleChatCompletionCalls.length).toBe(0);
+    });
 
-      expect(testSetup.mockCoreWrapper.handleChatCompletionCalls.length).toBeGreaterThan(0);
-      const lastCall = testSetup.mockCoreWrapper.handleChatCompletionCalls[0];
-      expect(lastCall).toBeDefined();
-      expect(lastCall?.stream).toBe(false);
+    it('should forward each text delta as its own content chunk', async () => {
+      const mockRequest = testSetup.testDataFactory.createValidRequest();
+      testSetup.mockCoreWrapper.setMockStreamEvents([
+        { type: 'text', text: 'Hello' },
+        { type: 'text', text: ' world' },
+        { type: 'done', finishReason: 'stop', usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 } }
+      ]);
+
+      const generator = handler.createStreamingResponse(mockRequest);
+      for await (const _chunk of generator) { /* drain */ }
+
+      expect(testSetup.mockFormatter.createContentChunkCalls.length).toBe(2);
+      expect(testSetup.mockFormatter.createContentChunkCalls[0]?.content).toBe('Hello');
+      expect(testSetup.mockFormatter.createContentChunkCalls[1]?.content).toBe(' world');
+    });
+
+    it('should pass real usage and finish reason to the final chunk', async () => {
+      const mockRequest = testSetup.testDataFactory.createValidRequest();
+      const usage = { prompt_tokens: 12, completion_tokens: 34, total_tokens: 46 };
+      testSetup.mockCoreWrapper.setMockStreamEvents([
+        { type: 'text', text: 'partial' },
+        { type: 'done', finishReason: 'length', usage }
+      ]);
+
+      const generator = handler.createStreamingResponse(mockRequest);
+      for await (const _chunk of generator) { /* drain */ }
+
+      expect(testSetup.mockFormatter.createFinalChunkCalls.length).toBe(1);
+      expect(testSetup.mockFormatter.createFinalChunkCalls[0]?.finishReason).toBe('length');
+      expect(testSetup.mockFormatter.createFinalChunkCalls[0]?.usage).toEqual(usage);
     });
 
     it('should handle empty response content', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
-      const mockResponse = testSetup.testDataFactory.createValidResponse();
-      if (mockResponse.choices[0]) {
-        mockResponse.choices[0].message.content = '';
-      }
-      
-      testSetup.mockCoreWrapper.setMockResponse(mockResponse);
+      testSetup.mockCoreWrapper.setMockStreamEvents([
+        { type: 'done', finishReason: 'stop' }
+      ]);
 
       const generator = handler.createStreamingResponse(mockRequest);
       const chunks: string[] = [];
@@ -148,13 +171,14 @@ describe('StreamingHandler Core Functionality', () => {
 
       expect(chunks.length).toBeGreaterThan(0);
       expect(testSetup.mockFormatter.formatInitialChunkCalls.length).toBeGreaterThan(0);
+      expect(testSetup.mockFormatter.createContentChunkCalls.length).toBe(0);
       expect(testSetup.mockFormatter.formatDoneCalls).toBeGreaterThan(0);
     });
 
     it('should handle core wrapper errors', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
       const error = new Error('Core wrapper error');
-      
+
       testSetup.mockCoreWrapper.shouldThrowError = true;
       testSetup.mockCoreWrapper.errorToThrow = error;
 
@@ -168,94 +192,58 @@ describe('StreamingHandler Core Functionality', () => {
       expect(testSetup.mockFormatter.formatErrorCalls.length).toBeGreaterThan(0);
       expect(testSetup.mockFormatter.formatErrorCalls[0]?.message).toBe('Core wrapper error');
     });
+  });
 
-    it('should handle multiline response content', async () => {
+  describe('createStreamingResponse (with tools)', () => {
+    it('should stream tool-carrying requests via streamChatCompletion (not the buffered handleChatCompletion)', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
+      mockRequest.tools = [{ type: 'function', function: { name: 'get_weather', parameters: {} } }];
       const mockResponse = testSetup.testDataFactory.createValidResponse();
-      if (mockResponse.choices[0]) {
-        mockResponse.choices[0].message.content = 'Line 1\nLine 2\nLine 3';
-      }
-      
+
       testSetup.mockCoreWrapper.setMockResponse(mockResponse);
 
       const generator = handler.createStreamingResponse(mockRequest);
-      const chunks: string[] = [];
+      for await (const _chunk of generator) { /* drain */ }
 
-      for await (const chunk of generator) {
-        chunks.push(chunk);
-      }
-
-      expect(chunks.length).toBeGreaterThan(0);
-      expect(testSetup.mockFormatter.createContentChunkCalls.length).toBeGreaterThan(0);
+      expect(testSetup.mockCoreWrapper.streamChatCompletionCalls.length).toBe(1);
+      expect(testSetup.mockCoreWrapper.handleChatCompletionCalls.length).toBe(0);
     });
 
-    it('should handle response with no choices', async () => {
+    it('should emit a single tool_calls chunk when the stream yields a tool_calls event', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
-      const mockResponse = testSetup.testDataFactory.createValidResponse();
-      mockResponse.choices = [];
-      
-      testSetup.mockCoreWrapper.setMockResponse(mockResponse);
-
-      const generator = handler.createStreamingResponse(mockRequest);
-      const chunks: string[] = [];
-
-      for await (const chunk of generator) {
-        chunks.push(chunk);
-      }
-
-      expect(chunks.length).toBeGreaterThan(0);
-      expect(testSetup.mockFormatter.formatInitialChunkCalls.length).toBeGreaterThan(0);
-      expect(testSetup.mockFormatter.formatDoneCalls).toBeGreaterThan(0);
-    });
-
-    it('should emit a tool_calls chunk instead of dropping the tool call when the response has no content', async () => {
-      const mockRequest = testSetup.testDataFactory.createValidRequest();
-      const mockResponse = testSetup.testDataFactory.createValidResponse();
+      mockRequest.tools = [{ type: 'function', function: { name: 'get_weather', parameters: {} } }];
       const toolCalls = [{
         id: 'call_abc123',
         type: 'function' as const,
         function: { name: 'get_weather', arguments: '{"location":"Paris"}' }
       }];
-      if (mockResponse.choices[0]) {
-        mockResponse.choices[0].message.content = null;
-        mockResponse.choices[0].message.tool_calls = toolCalls;
-        mockResponse.choices[0].finish_reason = 'tool_calls';
-      }
-
-      testSetup.mockCoreWrapper.setMockResponse(mockResponse);
+      testSetup.mockCoreWrapper.setMockStreamEvents([
+        { type: 'tool_calls', toolCalls },
+        { type: 'done', finishReason: 'tool_calls' }
+      ]);
 
       const generator = handler.createStreamingResponse(mockRequest);
-      const chunks: string[] = [];
-
-      for await (const chunk of generator) {
-        chunks.push(chunk);
-      }
+      for await (const _chunk of generator) { /* drain */ }
 
       expect(testSetup.mockFormatter.createToolCallsChunkCalls.length).toBe(1);
       expect(testSetup.mockFormatter.createToolCallsChunkCalls[0]?.toolCalls).toEqual(toolCalls);
-      // Must not silently fall through to the empty-content text path
       expect(testSetup.mockFormatter.createContentChunkCalls.length).toBe(0);
       expect(testSetup.mockFormatter.createFinalChunkCalls[0]?.finishReason).toBe('tool_calls');
     });
 
-    it('should handle response with custom finish reason', async () => {
+    it('should stream text content when a tool-carrying request resolves to plain text', async () => {
       const mockRequest = testSetup.testDataFactory.createValidRequest();
-      const mockResponse = testSetup.testDataFactory.createValidResponse();
-      if (mockResponse.choices[0]) {
-        mockResponse.choices[0].finish_reason = 'length';
-      }
-      
-      testSetup.mockCoreWrapper.setMockResponse(mockResponse);
+      mockRequest.tools = [{ type: 'function', function: { name: 'noop', parameters: {} } }];
+      testSetup.mockCoreWrapper.setMockStreamEvents([
+        { type: 'text', text: 'Just a plain answer' },
+        { type: 'done', finishReason: 'stop' }
+      ]);
 
       const generator = handler.createStreamingResponse(mockRequest);
-      const chunks: string[] = [];
+      for await (const _chunk of generator) { /* drain */ }
 
-      for await (const chunk of generator) {
-        chunks.push(chunk);
-      }
-
-      expect(testSetup.mockFormatter.createFinalChunkCalls.length).toBeGreaterThan(0);
-      expect(chunks.length).toBeGreaterThan(0);
+      expect(testSetup.mockFormatter.createContentChunkCalls.length).toBe(1);
+      expect(testSetup.mockFormatter.createToolCallsChunkCalls.length).toBe(0);
     });
   });
 

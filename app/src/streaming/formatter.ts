@@ -1,7 +1,8 @@
 import {
   IStreamingFormatter,
   OpenAIStreamingResponse,
-  OpenAIToolCall
+  OpenAIToolCall,
+  OpenAIUsage
 } from '../types';
 import { 
   OPENAI_STREAMING
@@ -126,7 +127,7 @@ export class StreamingFormatter implements IStreamingFormatter {
   /**
    * Create final chunk with finish reason
    */
-  createFinalChunk(requestId: string, model: string, finishReason: string = OPENAI_STREAMING.FINISH_REASONS.STOP): string {
+  createFinalChunk(requestId: string, model: string, finishReason: string = OPENAI_STREAMING.FINISH_REASONS.STOP, usage?: OpenAIUsage): string {
     const finalChunk: OpenAIStreamingResponse = {
       id: requestId,
       object: OPENAI_STREAMING.OBJECT_TYPE,
@@ -136,9 +137,12 @@ export class StreamingFormatter implements IStreamingFormatter {
         index: 0,
         delta: {},
         finish_reason: finishReason as any
-      }]
+      }],
+      // Real token counts when available (streaming path). Clients that don't
+      // request usage simply ignore the extra field.
+      ...(usage && { usage })
     };
-    
+
     return this.formatChunk(finalChunk);
   }
 }

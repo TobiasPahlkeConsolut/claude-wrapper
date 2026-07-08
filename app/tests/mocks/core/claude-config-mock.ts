@@ -9,6 +9,7 @@ import { EnvironmentConfig } from '../../../src/types';
 
 export interface ClaudeConfigMockConfig {
   port?: number;
+  host?: string;
   timeout?: number;
   claudeCommand?: string;
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
@@ -64,6 +65,7 @@ export class ClaudeConfigMock {
       // Return current config state
       return {
         port: this.config.port || 8000,
+        host: this.config.host || '127.0.0.1',
         timeout: this.config.timeout || 30000,
         claudeCommand: this.config.claudeCommand,
         logLevel: this.config.logLevel || 'info'

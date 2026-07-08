@@ -9,7 +9,8 @@ import healthRoutes from './routes/health';
 import sessionRoutes from './routes/sessions';
 import authRoutes from './routes/auth';
 import logsRoutes from './routes/logs';
-import portForwardingRoutes from './routes/port-forwarding';
+// WSL port-forwarding route disabled (WSL support turned off for performance).
+// import portForwardingRoutes from './routes/port-forwarding';
 import { logger } from '../utils/logger';
 import { EnvironmentManager } from '../config/env';
 import { createAuthMiddleware, getApiKey } from '../auth/middleware';
@@ -43,7 +44,9 @@ if (EnvironmentManager.isDebugMode()) {
 app.use((req, res, next) => {
   const apiKey = getApiKey();
   const authMiddleware = createAuthMiddleware({
-    skipPaths: ['/health', '/docs', '/swagger.json', '/v1/auth/status', '/logs', '/port-forwarding'], // Always allow these endpoints
+    // Public endpoints (no API key required). /logs is intentionally NOT here:
+    // it can expose request bodies/headers, so it must sit behind auth.
+    skipPaths: ['/health', '/docs', '/swagger.json', '/v1/auth/status'],
     ...(apiKey && { apiKey }) // Only include apiKey if it exists
   });
   authMiddleware(req, res, next);
@@ -66,7 +69,7 @@ app.use('/', modelsRoutes);
 app.use('/', sessionRoutes);
 app.use('/', authRoutes);
 app.use('/', logsRoutes);
-app.use('/', portForwardingRoutes);
+// app.use('/', portForwardingRoutes); // WSL port-forwarding disabled for performance
 app.use('/', chatRoutes);
 
 // Error handling (must be last)
@@ -82,9 +85,10 @@ export function createServer() {
 export function startServer(): void {
   const config = EnvironmentManager.getConfig();
   
-  app.listen(config.port, '0.0.0.0', () => {
+  app.listen(config.port, config.host, () => {
     logger.info('Server started successfully', {
       port: config.port,
+      host: config.host,
       environment: EnvironmentManager.isProduction() ? 'production' : 'development'
     });
   });

@@ -86,20 +86,19 @@ describe('ClaudeResolver', () => {
         expect(command).toBe('/usr/local/bin/claude');
       });
 
-      it('should handle Docker container detection', async () => {
-        // Mock all PATH resolution attempts to fail, then Docker to succeed
-        mockExecAsync
-          .mockRejectedValueOnce(new Error('Command not found'))  // bash -i -c "which claude"
-          .mockRejectedValueOnce(new Error('Command not found'))  // zsh -i -c "which claude"
-          .mockRejectedValueOnce(new Error('Command not found'))  // command -v claude
-          .mockRejectedValueOnce(new Error('Command not found'))  // which claude
-          .mockResolvedValueOnce({ stdout: 'Claude CLI v1.0.0 @anthropic-ai', stderr: '' })  // docker run --rm anthropic/claude --version
-          .mockResolvedValueOnce({ stdout: 'Claude CLI v1.0.0 @anthropic-ai', stderr: '' });  // validation call
+      it('should not attempt Docker container detection (disabled for performance)', async () => {
+        // Docker/podman probing was removed from the resolver to avoid launching
+        // a container on every startup. If every non-Docker lookup fails, the
+        // resolver must throw rather than fall back to a `docker run ...` command.
+        mockExecAsync.mockRejectedValue(new Error('Command not found'));
 
         const resolver = new ClaudeResolver();
-        const command = await resolver.findClaudeCommand();
-        
-        expect(command).toBe('docker run --rm anthropic/claude');
+
+        await expect(resolver.findClaudeCommand()).rejects.toThrow();
+
+        // No probe command passed to execAsync should reference docker/podman.
+        const attemptedCommands = mockExecAsync.mock.calls.map((call) => String(call[0]));
+        expect(attemptedCommands.some((cmd) => /docker|podman/.test(cmd))).toBe(false);
       });
     });
 

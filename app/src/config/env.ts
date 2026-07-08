@@ -15,6 +15,10 @@ export class EnvironmentManager {
   private static loadConfig(): EnvironmentConfig {
     return {
       port: this.getNumberFromEnv('PORT', API_CONSTANTS.DEFAULT_PORT),
+      // Bind to loopback by default so the Claude-executing API isn't exposed
+      // to the whole network. Set HOST=0.0.0.0 to opt into LAN access (e.g. a
+      // WSL setup that needs Windows-side port forwarding) - a deliberate choice.
+      host: process.env['HOST'] || '127.0.0.1',
       timeout: this.getNumberFromEnv('TIMEOUT', API_CONSTANTS.DEFAULT_TIMEOUT),
       claudeCommand: process.env['CLAUDE_COMMAND'],
       logLevel: this.getLogLevelFromEnv('LOG_LEVEL', 'info'),

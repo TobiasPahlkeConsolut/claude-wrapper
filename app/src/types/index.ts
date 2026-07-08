@@ -31,6 +31,17 @@ export interface OpenAIUsage {
   total_tokens: number;
 }
 
+// A single event emitted by the streaming path. Text deltas arrive as the
+// Claude CLI produces them; a 'tool_calls' event is emitted instead of text
+// when a tool-carrying request resolves to a tool call (detected by sniffing
+// the first non-whitespace character - see CoreWrapper.streamChatCompletion);
+// a final 'done' event carries the stop reason and (unlike the old buffered
+// path) the real token usage reported by the CLI.
+export type ClaudeStreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_calls'; toolCalls: OpenAIToolCall[] }
+  | { type: 'done'; finishReason: 'stop' | 'length' | 'tool_calls'; usage?: OpenAIUsage };
+
 export interface OpenAIChoice {
   index: number;
   message: OpenAIMessage;
@@ -64,12 +75,14 @@ export interface ClaudeRequest {
 export interface IClaudeClient {
   execute(request: ClaudeRequest): Promise<string>;
   executeWithSession(request: ClaudeRequest, sessionId: string | null, useJsonOutput: boolean): Promise<string>;
+  executeStreaming(request: ClaudeRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 
 export interface IClaudeResolver {
   findClaudeCommand(): Promise<string>;
   executeClaudeCommand(prompt: string, model: string): Promise<string>;
   executeClaudeCommandWithSession(prompt: string, model: string, sessionId: string | null, useJsonOutput: boolean, systemPrompt?: string | null): Promise<string>;
+  executeClaudeCommandStreaming(prompt: string, model: string, systemPrompt?: string | null): AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 
 export interface IResponseValidator {
@@ -79,11 +92,13 @@ export interface IResponseValidator {
 
 export interface ICoreWrapper {
   handleChatCompletion(request: OpenAIRequest): Promise<OpenAIResponse>;
+  streamChatCompletion(request: OpenAIRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 
 // Configuration Types
 export interface EnvironmentConfig {
   port: number;
+  host: string;
   timeout: number;
   claudeCommand: string | undefined;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -165,6 +180,7 @@ export interface OpenAIStreamingResponse {
   created: number;
   model: string;
   choices: OpenAIStreamingChoice[];
+  usage?: OpenAIUsage;
 }
 
 export interface StreamConnection {
@@ -187,7 +203,7 @@ export interface IStreamingFormatter {
   formatInitialChunk(requestId: string, model: string): string;
   createContentChunk(requestId: string, model: string, content: string): string;
   createToolCallsChunk(requestId: string, model: string, toolCalls: OpenAIToolCall[]): string;
-  createFinalChunk(requestId: string, model: string, finishReason?: string): string;
+  createFinalChunk(requestId: string, model: string, finishReason?: string, usage?: OpenAIUsage): string;
 }
 
 export interface IStreamingManager {

@@ -3,10 +3,11 @@
  * Tests interactive prompts logic without external dependencies
  */
 
-import { 
+import {
   InteractiveApiKeySetup,
   IReadlineInterface,
-  promptForApiProtection
+  promptForApiProtection,
+  interactiveSetup
 } from '../../../src/cli/interactive';
 import { SECURITY_ENV_VARS } from '../../../src/config/security-constants';
 
@@ -195,11 +196,53 @@ describe('InteractiveApiKeySetup', () => {
     it('should handle short API keys', () => {
       const setup = new InteractiveApiKeySetup();
       const shortKey = 'abc';
-      
+
       const maskMethod = (setup as any).maskApiKey;
       const masked = maskMethod(shortKey);
 
       expect(masked).toBe('***');
     });
+  });
+});
+
+describe('interactiveSetup - applies the chosen key to the environment', () => {
+  let consoleSpy: jest.SpyInstance;
+  const originalKey = process.env[SECURITY_ENV_VARS.API_KEY];
+
+  beforeEach(() => {
+    consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+    delete process.env[SECURITY_ENV_VARS.API_KEY];
+  });
+
+  afterEach(() => {
+    consoleSpy.mockRestore();
+    if (originalKey === undefined) {
+      delete process.env[SECURITY_ENV_VARS.API_KEY];
+    } else {
+      process.env[SECURITY_ENV_VARS.API_KEY] = originalKey;
+    }
+  });
+
+  it('should set API_KEY in the environment when the user opts in (regression: key was previously discarded)', async () => {
+    const result = await interactiveSetup(new MockReadlineInterface(['y']));
+
+    expect(result).toBeTruthy();
+    expect(process.env[SECURITY_ENV_VARS.API_KEY]).toBe(result);
+  });
+
+  it('should leave auth disabled when the user declines', async () => {
+    const result = await interactiveSetup(new MockReadlineInterface(['n']));
+
+    expect(result).toBeNull();
+    expect(process.env[SECURITY_ENV_VARS.API_KEY]).toBeUndefined();
+  });
+
+  it('should preserve an already-configured key', async () => {
+    process.env[SECURITY_ENV_VARS.API_KEY] = 'preset-key';
+
+    const result = await interactiveSetup(new MockReadlineInterface(['y']));
+
+    expect(result).toBe('preset-key');
+    expect(process.env[SECURITY_ENV_VARS.API_KEY]).toBe('preset-key');
   });
 });

@@ -5,6 +5,7 @@ import { OpenAIRequest } from '../../types';
 import { InvalidRequestError } from '../../utils/errors';
 import { asyncHandler } from '../middleware/error';
 import { streamingMiddleware } from '../middleware/streaming';
+import { isValidModel } from './models';
 import { logger } from '../../utils/logger';
 
 const router = Router();
@@ -26,6 +27,17 @@ router.post('/v1/chat/completions',
     // Validate required fields
     if (!request.model || !request.messages || !Array.isArray(request.messages)) {
       throw new InvalidRequestError('Invalid request format: model and messages are required');
+    }
+
+    // Reject unknown models. Besides being correct API behavior, this is a
+    // security control: the model string is passed to the `claude` CLI's
+    // --model flag, and the non-streaming path builds its command through a
+    // shell - an unvalidated value could carry shell metacharacters. The
+    // allowlist (GET /v1/models) blocks that entirely.
+    if (!isValidModel(request.model)) {
+      throw new InvalidRequestError(
+        `Unsupported model. See GET /v1/models for the list of supported models.`
+      );
     }
 
     if (request.messages.length === 0) {

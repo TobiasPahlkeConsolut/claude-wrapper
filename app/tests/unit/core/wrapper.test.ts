@@ -380,7 +380,7 @@ describe('CoreWrapper', () => {
   });
 
   describe('streaming support', () => {
-    it('should delegate streaming requests to regular completion', async () => {
+    it('should stream text events from the claude client', async () => {
       const request: OpenAIRequest = {
         model: 'sonnet',
         messages: [{ role: 'user', content: 'Hello' }],
@@ -388,17 +388,60 @@ describe('CoreWrapper', () => {
       };
 
       ClaudeClientMock.setDefaultResponse('Response');
-      ValidatorMock.setValidationAsValid(false);
 
-      const result = await wrapper.handleStreamingChatCompletion(request);
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
 
-      expect(result).toEqual(expect.objectContaining({
-        choices: [expect.objectContaining({
-          message: expect.objectContaining({
-            content: 'Response'
-          })
-        })]
-      }));
+      expect(events).toContainEqual({ type: 'text', text: 'Response' });
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'stop' })
+      );
+    });
+
+    it('should stream a tool-carrying request as text when the answer is plain text (first char not "{")', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Hi' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'noop', parameters: {} } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse('Hello there');
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual({ type: 'text', text: 'Hello there' });
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+    });
+
+    it('should emit a tool_calls event when a tool-carrying request returns a tool_calls JSON object (first char "{")', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Weather in Paris?' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse('{"tool_calls":[{"name":"get_weather","arguments":{"location":"Paris"}}]}');
+
+      const events = [];
+      for await (const event of wrapper.streamChatCompletion(request)) {
+        events.push(event);
+      }
+
+      const toolEvent = events.find(e => e.type === 'tool_calls') as { type: 'tool_calls'; toolCalls: any[] } | undefined;
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent?.toolCalls[0]?.function?.name).toBe('get_weather');
+      // The raw JSON must NOT have been streamed as visible text
+      expect(events.some(e => e.type === 'text')).toBe(false);
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
+      );
     });
   });
 

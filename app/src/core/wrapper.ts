@@ -10,6 +10,7 @@ import {
 import { ClaudeClient } from './claude-client';
 import { ResponseValidator } from './validator';
 import { logger } from '../utils/logger';
+import { ClaudeStreamEvent } from '../types';
 import {
   API_CONSTANTS,
   TEMPLATE_CONSTANTS,
@@ -279,18 +280,86 @@ export class CoreWrapper implements ICoreWrapper {
   }
 
   /**
-   * Handle streaming chat completion (future enhancement)
-   * Currently returns single response, but structured for future streaming support
+   * Stream a chat completion as deltas arrive from the Claude CLI.
+   *
+   * Tool-less requests stream straight through: each text delta is forwarded as
+   * it arrives.
+   *
+   * Tool-carrying requests use a first-token sniff so they can stream too. The
+   * model is instructed (see createFormatTemplate) to answer in plain text OR
+   * reply with nothing but a `{"tool_calls":[...]}` object. So we buffer only
+   * until the first non-whitespace character:
+   *   - '{'  → treat as a tool call: keep accumulating silently, then parse the
+   *            complete text into a tool_calls event at the end.
+   *   - else → stream: flush what we've buffered and forward every later delta
+   *            as text, exactly like the tool-less path.
+   * This gives real token-by-token streaming for ordinary answers (the common
+   * case for an IDE that always sends a tools array) while still round-tripping
+   * genuine tool calls. The only cost: a plain answer that happens to start with
+   * '{' is buffered and emitted at once (rare, and still correct).
    */
-  async handleStreamingChatCompletion(request: OpenAIRequest): Promise<OpenAIResponse> {
-    logger.info('Processing streaming chat completion (simulated)', {
+  async *streamChatCompletion(request: OpenAIRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
+    logger.info('Processing streaming chat completion', {
       model: request.model,
-      messageCount: request.messages.length
+      messageCount: request.messages.length,
+      hasTools: !!(request.tools && request.tools.length > 0)
     });
 
-    // For now, delegate to regular completion
-    // Future: Implement true streaming with Claude CLI
-    return this.handleChatCompletion(request);
+    // Reuse the same request shaping as the buffered path: when tools are
+    // present this injects the tool_calls format instruction (as a system
+    // message) and carries the tools through so the model knows the convention.
+    const claudeRequest = this.addFormatInstructions(request);
+    const hasTools = !!(request.tools && request.tools.length > 0);
+
+    if (!hasTools) {
+      yield* this.claudeClient.executeStreaming(claudeRequest);
+      return;
+    }
+
+    let buffer = '';
+    let decision: 'pending' | 'text' | 'tool' = 'pending';
+
+    for await (const event of this.claudeClient.executeStreaming(claudeRequest)) {
+      if (event.type === 'text') {
+        if (decision === 'text') {
+          // Already streaming as text - forward directly.
+          yield { type: 'text', text: event.text };
+          continue;
+        }
+
+        buffer += event.text;
+        if (decision === 'pending') {
+          const trimmed = buffer.replace(/^\s+/, '');
+          if (trimmed.length === 0) {
+            continue; // still only whitespace - keep waiting for a real character
+          }
+          if (trimmed[0] === '{') {
+            decision = 'tool'; // keep accumulating silently until 'done'
+          } else {
+            decision = 'text';
+            yield { type: 'text', text: buffer }; // flush everything buffered so far
+            buffer = '';
+          }
+        }
+      } else if (event.type === 'done') {
+        if (decision === 'tool') {
+          const toolResponse = this.tryParseMinimalToolCalls(buffer, request.model);
+          const toolCalls = toolResponse?.choices[0]?.message?.tool_calls;
+          if (toolCalls && toolCalls.length > 0) {
+            yield { type: 'tool_calls', toolCalls };
+            yield { type: 'done', finishReason: 'tool_calls', ...(event.usage && { usage: event.usage }) };
+            return;
+          }
+          // Started with '{' but wasn't a valid tool_calls object - emit as text.
+          yield { type: 'text', text: buffer };
+        } else if (decision === 'pending' && buffer) {
+          // Whole response was whitespace-only; emit it so nothing is lost.
+          yield { type: 'text', text: buffer };
+        }
+        yield { type: 'done', finishReason: event.finishReason, ...(event.usage && { usage: event.usage }) };
+        return;
+      }
+    }
   }
 
   private generateRequestId(): string {

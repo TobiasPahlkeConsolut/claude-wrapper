@@ -168,13 +168,23 @@ export async function promptForApiProtection(options: ApiKeySetupOptions = {}): 
  * Main interactive setup function
  * Matches original claude-wrapper interactive pattern
  */
-export async function interactiveSetup(): Promise<void> {
+export async function interactiveSetup(readline?: IReadlineInterface): Promise<string | null> {
   console.log('🚀 Starting Claude Wrapper...');
-  
+
   // Only prompt for API key if not already set
   if (!process.env[SECURITY_ENV_VARS.API_KEY]) {
-    await promptForApiProtection();
+    const apiKey = await promptForApiProtection(readline ? { readline } : {});
+    if (apiKey) {
+      // Actually enable protection: without this the generated key was printed
+      // to the user but never applied, so the server started unauthenticated.
+      // Setting it here means both the foreground server and the spawned daemon
+      // (which inherits process.env) pick it up.
+      process.env[SECURITY_ENV_VARS.API_KEY] = apiKey;
+    }
+    console.log('Setup complete!');
+    return apiKey;
   }
-  
+
   console.log('Setup complete!');
+  return process.env[SECURITY_ENV_VARS.API_KEY] ?? null;
 }

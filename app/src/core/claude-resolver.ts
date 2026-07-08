@@ -1,10 +1,11 @@
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
+import * as readline from 'readline';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { IClaudeResolver } from '../types';
+import { IClaudeResolver, ClaudeStreamEvent, OpenAIUsage } from '../types';
 import { ClaudeCliError, TimeoutError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { EnvironmentManager } from '../config/env';
@@ -26,19 +27,20 @@ export class ClaudeResolver implements IClaudeResolver {
       return config.claudeCommand;
     }
 
-    // Try PATH resolution - covers npm global installs, aliases, and Docker
+    // Try PATH resolution - covers npm global installs and aliases
     const pathCommands = [
       // Interactive shells (handles aliases)
       'bash -i -c "which claude"',
       'zsh -i -c "which claude"',
-      
+
       // Direct PATH lookups (handles npm global installs)
       'command -v claude',
       'which claude',
-      
-      // Docker detection (check if Docker containers are available)
-      'docker run --rm anthropic/claude --version',
-      'podman run --rm anthropic/claude --version'
+
+      // Docker detection disabled for performance — probing these actually
+      // launches a container (with a 2s timeout each) on every startup.
+      // 'docker run --rm anthropic/claude --version',
+      // 'podman run --rm anthropic/claude --version'
     ];
     
     // Windows-specific commands
@@ -63,14 +65,15 @@ export class ClaudeResolver implements IClaudeResolver {
           let actualPath = cleanedPath;
           logger.debug('Processing Claude path detection', { claudePath: cleanedPath, pathCmd });
           
-          // Handle Docker commands
-          if (pathCmd.includes('docker run') || pathCmd.includes('podman run')) {
-            // For Docker, the full command is the "path"
-            actualPath = pathCmd.replace(' --version', '');
-            logger.debug('Parsed Docker command', { actualPath });
-          }
+          // Docker command handling disabled for performance (detection above
+          // no longer probes Docker/podman).
+          // if (pathCmd.includes('docker run') || pathCmd.includes('podman run')) {
+          //   // For Docker, the full command is the "path"
+          //   actualPath = pathCmd.replace(' --version', '');
+          //   logger.debug('Parsed Docker command', { actualPath });
+          // }
           // Handle shell alias output
-          else if (cleanedPath.includes(': aliased to ')) {
+          if (cleanedPath.includes(': aliased to ')) {
             const splitPath = cleanedPath.split(': aliased to ')[1];
             actualPath = splitPath ? splitPath.trim() : cleanedPath;
             logger.debug('Parsed alias', { actualPath });
@@ -100,8 +103,9 @@ export class ClaudeResolver implements IClaudeResolver {
     const envVars = [
       process.env['CLAUDE_COMMAND'],
       process.env['CLAUDE_CLI_PATH'],
-      process.env['CLAUDE_DOCKER_IMAGE'] ? `docker run --rm ${process.env['CLAUDE_DOCKER_IMAGE']}` : undefined,
-      process.env['DOCKER_CLAUDE_CMD']
+      // Docker-based fallbacks disabled for performance:
+      // process.env['CLAUDE_DOCKER_IMAGE'] ? `docker run --rm ${process.env['CLAUDE_DOCKER_IMAGE']}` : undefined,
+      // process.env['DOCKER_CLAUDE_CMD']
     ].filter(Boolean) as string[];
 
     for (const envPath of envVars) {
@@ -194,14 +198,15 @@ export class ClaudeResolver implements IClaudeResolver {
       flags += ` --system-prompt-file "${systemPromptFile}"`;
     }
 
-    // Handle Docker commands
-    if (claudeCmd.includes('docker run') || claudeCmd.includes('podman run')) {
-      // For Docker, we need to modify the container command
-      const dockerCommand = claudeCmd + ` ${flags}`;
-      command = `${dockerCommand} < "${tempFile}"`;
-    }
+    // Docker command handling disabled for performance (Docker detection is
+    // no longer attempted, so claudeCmd is never a docker/podman invocation).
+    // if (claudeCmd.includes('docker run') || claudeCmd.includes('podman run')) {
+    //   // For Docker, we need to modify the container command
+    //   const dockerCommand = claudeCmd + ` ${flags}`;
+    //   command = `${dockerCommand} < "${tempFile}"`;
+    // }
     // Handle bash -c wrapped commands
-    else if (claudeCmd.includes('bash -c')) {
+    if (claudeCmd.includes('bash -c')) {
       command = `${claudeCmd.replace('"claude"', `"claude ${flags}"`)} < "${tempFile}"`;
     }
     // Handle regular commands
@@ -245,6 +250,164 @@ export class ClaudeResolver implements IClaudeResolver {
         await fs.promises.unlink(systemPromptFile).catch(() => {});
       }
     }
+  }
+
+  /**
+   * Stream a Claude completion token-by-token.
+   *
+   * Unlike executeClaudeCommandWithSession (which uses a buffered `exec` and
+   * only returns once the whole answer is ready), this spawns the CLI with
+   * `--output-format stream-json --include-partial-messages` and forwards each
+   * text delta as the model produces it. The prompt is written to the child's
+   * stdin and args are passed as an array (no shell), so there's no command
+   * line length limit and no shell-metacharacter interpretation of `model`.
+   *
+   * Only text_delta content is forwarded; the CLI also emits thinking/signature
+   * deltas which the buffered path already discards, so we skip them here for
+   * parity. A final 'done' event carries the real token usage from the CLI's
+   * `result` event.
+   *
+   * Assumes the resolved command is a directly-spawnable executable (the normal
+   * case: an npm-global bin or a `where claude` path). Shell-wrapped commands
+   * are not supported on the streaming path; callers fall back to the buffered
+   * path for tool requests, which is where any such exotic setup would surface.
+   */
+  async *executeClaudeCommandStreaming(
+    prompt: string,
+    model: string,
+    systemPrompt?: string | null
+  ): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
+    const claudeCmd = await this.findClaudeCommand();
+    const config = EnvironmentManager.getConfig();
+
+    let systemPromptFile: string | null = null;
+    if (systemPrompt) {
+      systemPromptFile = path.join(os.tmpdir(), `claude-wrapper-system-${crypto.randomUUID()}.txt`);
+      await fs.promises.writeFile(systemPromptFile, systemPrompt, 'utf-8');
+    }
+
+    // Same completion flags as the buffered path (see executeClaudeCommandWithSession
+    // for why --safe-mode --tools "" are required), plus the streaming output format.
+    const args = [
+      '--print',
+      '--model', model,
+      '--safe-mode',
+      '--tools', '',
+      '--output-format', 'stream-json',
+      '--include-partial-messages',
+      '--verbose',
+    ];
+    if (systemPromptFile) {
+      args.push('--system-prompt-file', systemPromptFile);
+    }
+
+    logger.debug('Streaming Claude command', {
+      model,
+      promptLength: prompt.length,
+      hasSystemPrompt: !!systemPrompt,
+    });
+
+    const child = spawn(claudeCmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // If the child dies before we finish writing, stdin emits EPIPE; swallow it
+    // so it doesn't crash the process (the close handler surfaces the real error).
+    child.stdin.on('error', () => {});
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, config.timeout);
+    const exitPromise = new Promise<number | null>((resolve) => {
+      child.on('close', (code) => resolve(code));
+    });
+
+    const rl = readline.createInterface({ input: child.stdout });
+
+    let finishReason: 'stop' | 'length' | 'tool_calls' = 'stop';
+    let usage: OpenAIUsage | undefined;
+    let sawResult = false;
+
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+
+        let event: any;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue; // non-JSON line (shouldn't happen with stream-json, but be safe)
+        }
+
+        if (event.type === 'stream_event' && event.event) {
+          const inner = event.event;
+          if (inner.type === 'content_block_delta' && inner.delta?.type === 'text_delta') {
+            const text: string = inner.delta.text ?? '';
+            if (text) {
+              yield { type: 'text', text };
+            }
+          } else if (inner.type === 'message_delta' && inner.delta?.stop_reason) {
+            finishReason = this.mapStopReason(inner.delta.stop_reason);
+          }
+        } else if (event.type === 'result') {
+          sawResult = true;
+          if (event.is_error) {
+            throw new ClaudeCliError(
+              `Claude CLI returned an error: ${event.subtype || event.api_error_status || 'unknown'}`
+            );
+          }
+          if (event.usage) {
+            usage = this.mapUsage(event.usage);
+          }
+        }
+      }
+
+      const code = await exitPromise;
+      clearTimeout(timer);
+
+      if (timedOut) {
+        throw new TimeoutError(`Claude CLI execution timed out after ${config.timeout}ms`);
+      }
+      if (code !== 0 && !sawResult) {
+        throw new ClaudeCliError(
+          `Claude CLI exited with code ${code}${stderr.trim() ? `: ${stderr.trim()}` : ''}`
+        );
+      }
+      if (stderr.trim()) {
+        logger.warn('Claude CLI warning (streaming)', { stderr: stderr.trim() });
+      }
+
+      yield { type: 'done', finishReason, ...(usage && { usage }) };
+    } finally {
+      clearTimeout(timer);
+      rl.close();
+      if (!child.killed) {
+        child.kill();
+      }
+      if (systemPromptFile) {
+        await fs.promises.unlink(systemPromptFile).catch(() => {});
+      }
+    }
+  }
+
+  private mapStopReason(reason: string): 'stop' | 'length' | 'tool_calls' {
+    if (reason === 'max_tokens') return 'length';
+    return 'stop';
+  }
+
+  private mapUsage(u: any): OpenAIUsage {
+    const promptTokens =
+      (u.input_tokens || 0) +
+      (u.cache_read_input_tokens || 0) +
+      (u.cache_creation_input_tokens || 0);
+    const completionTokens = u.output_tokens || 0;
+    return {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    };
   }
 
   private async testClaudeCommand(command: string): Promise<boolean> {

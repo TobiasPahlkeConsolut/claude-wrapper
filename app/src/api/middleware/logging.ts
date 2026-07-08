@@ -11,16 +11,29 @@ declare global {
   }
 }
 
+// Credential-bearing headers are replaced with [REDACTED] before logging so
+// the API key / bearer token can't be read back out of the /logs buffer.
+function redactSensitiveHeaders(headers: Record<string, unknown>): Record<string, unknown> {
+  const redacted: Record<string, unknown> = { ...headers };
+  for (const header of ['authorization', 'cookie', 'x-api-key']) {
+    if (redacted[header] !== undefined) {
+      redacted[header] = '[REDACTED]';
+    }
+  }
+  return redacted;
+}
+
 export function requestLoggingMiddleware(req: Request, res: Response, next: NextFunction): void {
   // Generate unique request ID
   req.requestId = uuidv4();
   req.startTime = Date.now();
 
-  // Log incoming request
+  // Log incoming request. Redact credential-bearing headers so the API key /
+  // bearer token never lands in the in-memory log buffer served by /logs.
   const requestInfo = {
     method: req.method,
     url: req.originalUrl,
-    headers: req.headers,
+    headers: redactSensitiveHeaders(req.headers),
     query: req.query,
     userAgent: req.get('user-agent'),
     ip: req.ip,
@@ -135,7 +148,7 @@ export function errorLoggingMiddleware(error: Error, req: Request, _res: Respons
     requestId: req.requestId,
     method: req.method,
     url: req.originalUrl,
-    headers: req.headers,
+    headers: redactSensitiveHeaders(req.headers),
     body: req.body
   };
 

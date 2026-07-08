@@ -6,6 +6,7 @@
 
 import { logger } from './utils/logger';
 import { signalHandler } from './process/signals';
+import { EnvironmentManager } from './config/env';
 
 /**
  * Parse daemon arguments
@@ -61,8 +62,9 @@ async function startDaemon(): Promise<void> {
   // Import server AFTER setting environment variables
   const { default: app } = await import('./api/server');
 
-  // Start server
-  const server = app.listen(options.port, '0.0.0.0', () => {
+  // Start server (loopback by default; HOST=0.0.0.0 opts into LAN exposure)
+  const host = EnvironmentManager.getConfig().host;
+  const server = app.listen(options.port, host, () => {
     // Only log in verbose/debug mode for daemon
     if (options.verbose || options.debug) {
       logger.info(`🚀 Claude Wrapper daemon running on port ${options.port}`);

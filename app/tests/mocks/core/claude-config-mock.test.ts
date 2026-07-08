@@ -64,6 +64,7 @@ describe('ClaudeConfigMock', () => {
 
       expect(config).toEqual({
         port: 8000,
+        host: '127.0.0.1',
         timeout: 30000,
         claudeCommand: undefined,
         logLevel: 'info'
@@ -73,6 +74,7 @@ describe('ClaudeConfigMock', () => {
     it('should return custom configuration', () => {
       const customConfig = {
         port: 9999,
+        host: '0.0.0.0',
         timeout: 45000,
         claudeCommand: '/opt/claude',
         logLevel: 'warn' as const

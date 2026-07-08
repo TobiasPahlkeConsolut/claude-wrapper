@@ -25,6 +25,16 @@ const CLAUDE_MODELS = [
   { id: 'claude-haiku-4-5', object: 'model', owned_by: 'anthropic', created: 1709164800 }
 ];
 
+// Allowlist of model identifiers we will pass to the `claude` CLI's --model
+// flag. Validating against this set is what prevents a caller-supplied model
+// from carrying shell metacharacters into the CLI invocation (the non-streaming
+// path builds its command via a shell). Keep in sync with CLAUDE_MODELS above.
+export const VALID_MODEL_IDS: ReadonlySet<string> = new Set(CLAUDE_MODELS.map(m => m.id));
+
+export function isValidModel(model: string): boolean {
+  return VALID_MODEL_IDS.has(model);
+}
+
 router.get('/v1/models', asyncHandler(async (_req: Request, res: Response) => {
   logger.info('Returning available Claude models', { count: CLAUDE_MODELS.length });
   

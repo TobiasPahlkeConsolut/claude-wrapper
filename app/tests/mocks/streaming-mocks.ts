@@ -6,7 +6,9 @@ import {
   StreamConnection,
   OpenAIRequest,
   OpenAIResponse,
-  OpenAIToolCall
+  OpenAIToolCall,
+  OpenAIUsage,
+  ClaudeStreamEvent
 } from '../../src/types';
 
 /**
@@ -65,7 +67,7 @@ export class MockStreamingFormatter implements IStreamingFormatter {
   public formatInitialChunkCalls: Array<{requestId: string, model: string}> = [];
   public createContentChunkCalls: Array<{requestId: string, model: string, content: string}> = [];
   public createToolCallsChunkCalls: Array<{requestId: string, model: string, toolCalls: OpenAIToolCall[]}> = [];
-  public createFinalChunkCalls: Array<{requestId: string, model: string, finishReason?: string}> = [];
+  public createFinalChunkCalls: Array<{requestId: string, model: string, finishReason?: string, usage?: OpenAIUsage}> = [];
 
   formatChunk(chunk: OpenAIStreamingResponse): string {
     this.formatChunkCalls.push(chunk);
@@ -97,9 +99,10 @@ export class MockStreamingFormatter implements IStreamingFormatter {
     return `data: {"id":"${requestId}","model":"${model}","choices":[{"delta":{"tool_calls":${JSON.stringify(toolCalls)}}}]}\n\n`;
   }
 
-  createFinalChunk(requestId: string, model: string, finishReason: string = 'stop'): string {
-    this.createFinalChunkCalls.push({ requestId, model, finishReason });
-    return `data: {"id":"${requestId}","model":"${model}","choices":[{"delta":{},"finish_reason":"${finishReason}"}]}\n\n`;
+  createFinalChunk(requestId: string, model: string, finishReason: string = 'stop', usage?: OpenAIUsage): string {
+    this.createFinalChunkCalls.push({ requestId, model, finishReason, ...(usage !== undefined && { usage }) });
+    const usagePart = usage ? `,"usage":${JSON.stringify(usage)}` : '';
+    return `data: {"id":"${requestId}","model":"${model}","choices":[{"delta":{},"finish_reason":"${finishReason}"}]${usagePart}}\n\n`;
   }
 
   reset() {
@@ -178,8 +181,12 @@ export class MockStreamingManager implements IStreamingManager {
  */
 export class MockCoreWrapper implements ICoreWrapper {
   public handleChatCompletionCalls: OpenAIRequest[] = [];
+  public streamChatCompletionCalls: OpenAIRequest[] = [];
   public shouldThrowError: boolean = false;
   public errorToThrow: Error | null = null;
+  // When set, streamChatCompletion yields these events verbatim; otherwise it
+  // derives a single text event + done event from mockResponse's content.
+  public mockStreamEvents: ClaudeStreamEvent[] | null = null;
   public mockResponse: OpenAIResponse = {
     id: 'chatcmpl-mock123',
     object: 'chat.completion',
@@ -205,12 +212,43 @@ export class MockCoreWrapper implements ICoreWrapper {
     return this.mockResponse;
   }
 
+  async *streamChatCompletion(request: OpenAIRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
+    this.streamChatCompletionCalls.push(request);
+    if (this.shouldThrowError && this.errorToThrow) {
+      throw this.errorToThrow;
+    }
+    if (this.mockStreamEvents) {
+      for (const event of this.mockStreamEvents) {
+        yield event;
+      }
+      return;
+    }
+    // Default: derive from mockResponse. A tool_calls response yields a
+    // tool_calls event (mirroring CoreWrapper's sniff result); otherwise text.
+    const message = this.mockResponse.choices[0]?.message;
+    if (message?.tool_calls && message.tool_calls.length > 0) {
+      yield { type: 'tool_calls', toolCalls: message.tool_calls };
+      yield { type: 'done', finishReason: 'tool_calls', usage: this.mockResponse.usage };
+      return;
+    }
+    if (message?.content) {
+      yield { type: 'text', text: message.content };
+    }
+    yield { type: 'done', finishReason: 'stop', usage: this.mockResponse.usage };
+  }
+
   setMockResponse(response: OpenAIResponse) {
     this.mockResponse = response;
   }
 
+  setMockStreamEvents(events: ClaudeStreamEvent[]) {
+    this.mockStreamEvents = events;
+  }
+
   reset() {
     this.handleChatCompletionCalls = [];
+    this.streamChatCompletionCalls = [];
+    this.mockStreamEvents = null;
     this.shouldThrowError = false;
     this.errorToThrow = null;
     this.mockResponse = {

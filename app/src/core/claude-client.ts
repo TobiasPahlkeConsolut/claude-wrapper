@@ -1,4 +1,4 @@
-import { ClaudeRequest, IClaudeClient } from '../types';
+import { ClaudeRequest, IClaudeClient, ClaudeStreamEvent } from '../types';
 import { ClaudeResolver } from './claude-resolver';
 import { ClaudeCliError } from '../utils/errors';
 import { logger } from '../utils/logger';
@@ -58,6 +58,42 @@ export class ClaudeClient implements IClaudeClient {
       
       throw new ClaudeCliError(
         `Claude CLI execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  /**
+   * Stream a completion. Same message→prompt/system-prompt conversion as
+   * executeWithSession, but delegates to the resolver's streaming method so
+   * text deltas are forwarded as the CLI produces them. Used only for
+   * tool-less requests (the tool_calls convention needs the full text first).
+   */
+  async *executeStreaming(request: ClaudeRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
+    try {
+      const systemPrompt = this.extractSystemPrompt(request.messages, request.systemPrompt);
+      const conversationMessages = request.messages.filter(m => m.role !== 'system');
+      const prompt = this.messagesToPrompt(conversationMessages, request.tools);
+
+      logger.debug('Streaming Claude execution', {
+        model: request.model,
+        messageCount: request.messages.length,
+        hasSystemPrompt: !!systemPrompt,
+      });
+
+      yield* this.resolver.executeClaudeCommandStreaming(prompt, request.model, systemPrompt);
+
+      logger.info('Claude streaming execution completed successfully', { model: request.model });
+    } catch (error) {
+      logger.error('Claude CLI streaming execution failed', error as Error, {
+        model: request.model,
+        messageCount: request.messages.length,
+      });
+
+      if (error instanceof ClaudeCliError) {
+        throw error;
+      }
+      throw new ClaudeCliError(
+        `Claude CLI streaming execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }

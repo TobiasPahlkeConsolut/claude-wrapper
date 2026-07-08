@@ -9,9 +9,8 @@ import {
 import { StreamingFormatter } from './formatter';
 import { StreamingManager } from './manager';
 import { CoreWrapper } from '../core/wrapper';
-import { 
-  SSE_CONFIG, 
-  STREAMING_CONFIG, 
+import {
+  SSE_CONFIG,
   API_CONSTANTS
 } from '../config/constants';
 import { logger } from '../utils/logger';
@@ -99,75 +98,43 @@ export class StreamingHandler implements IStreamingHandler {
   }
 
   /**
-   * Create streaming response generator
+   * Create streaming response generator.
+   *
+   * Consumes the event stream from CoreWrapper.streamChatCompletion (which
+   * handles both plain-text streaming and the tool-call sniff) and maps each
+   * event to an OpenAI SSE chunk:
+   *   text       → content delta chunk
+   *   tool_calls → one tool_calls delta chunk
+   *   done       → final chunk (with finish_reason and real usage)
    */
   async* createStreamingResponse(request: OpenAIRequest): AsyncGenerator<string, void, unknown> {
     const requestId = this.generateRequestId();
-    
+
     try {
-      // Send initial chunk with role
       yield this.formatter.formatInitialChunk(requestId, request.model);
-      
-      // Simulate streaming by processing request and chunking response
-      logger.debug('Streaming: About to call handleChatCompletion', { requestId });
-      
-      // Create a clean request object without streaming
-      const nonStreamingRequest: OpenAIRequest = {
-        model: request.model,
-        messages: request.messages,
-        stream: false,
-        ...(request.tools && { tools: request.tools }),
-        ...(request.temperature && { temperature: request.temperature }),
-        ...(request.max_tokens && { max_tokens: request.max_tokens }),
-        ...(request.session_id && { session_id: request.session_id })
-      };
-      
-      const fullResponse = await this.coreWrapper.handleChatCompletion(nonStreamingRequest);
-      logger.debug('Streaming: handleChatCompletion completed', { requestId });
 
-      const message = fullResponse.choices[0]?.message;
-      const toolCalls = message?.tool_calls;
+      let finishReason: string = 'stop';
+      let usage;
 
-      if (toolCalls && toolCalls.length > 0) {
-        // Tool calls are emitted as one complete delta rather than fragmented
-        // text chunks - dropping them here (as chunkContent would, since
-        // content is null on a tool_calls message) silently discarded every
-        // tool call and left the caller re-sending the same request forever.
-        yield this.formatter.createToolCallsChunk(requestId, request.model, toolCalls);
-        yield this.formatter.createFinalChunk(requestId, request.model, fullResponse.choices[0]!.finish_reason);
-      } else {
-        const content = message?.content || '';
-        yield* this.chunkContent(requestId, request.model, content);
-        yield this.formatter.createFinalChunk(requestId, request.model);
+      for await (const event of this.coreWrapper.streamChatCompletion(request)) {
+        if (event.type === 'text') {
+          yield this.formatter.createContentChunk(requestId, request.model, event.text);
+        } else if (event.type === 'tool_calls') {
+          // Emitted as one complete delta rather than fragmented text chunks -
+          // most OpenAI-compatible clients accumulate tool_calls by index
+          // regardless of chunk count, so a single complete chunk parses the same.
+          yield this.formatter.createToolCallsChunk(requestId, request.model, event.toolCalls);
+        } else if (event.type === 'done') {
+          finishReason = event.finishReason;
+          usage = event.usage;
+        }
       }
 
+      yield this.formatter.createFinalChunk(requestId, request.model, finishReason, usage);
       yield this.formatter.formatDone();
-
     } catch (error) {
       logger.error('Error creating streaming response', error instanceof Error ? error : new Error(String(error)));
       yield this.formatter.formatError(error instanceof Error ? error : new Error(String(error)));
-    }
-  }
-
-  /**
-   * Chunk content into streaming pieces
-   */
-  private async* chunkContent(requestId: string, model: string, content: string): AsyncGenerator<string, void, unknown> {
-    // Split content into words for natural streaming
-    const words = content.split(' ');
-    let currentChunk = '';
-    
-    for (let i = 0; i < words.length; i++) {
-      currentChunk += (i > 0 ? ' ' : '') + words[i];
-      
-      // Send chunk when it reaches reasonable size or we're at the end
-      if (currentChunk.length >= STREAMING_CONFIG.MAX_CHUNK_SIZE || i === words.length - 1) {
-        yield this.formatter.createContentChunk(requestId, model, currentChunk);
-        currentChunk = '';
-        
-        // Small delay to simulate real streaming
-        await this.delay(STREAMING_CONFIG.CHUNK_TIMEOUT_MS);
-      }
     }
   }
 
@@ -190,13 +157,6 @@ export class StreamingHandler implements IStreamingHandler {
    */
   private generateRequestId(): string {
     return `${API_CONSTANTS.DEFAULT_REQUEST_ID_PREFIX}${Math.random().toString(36).substring(2, 15)}`;
-  }
-
-  /**
-   * Delay helper for streaming timing
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

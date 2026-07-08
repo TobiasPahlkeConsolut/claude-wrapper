@@ -5,7 +5,7 @@
  * Single Responsibility: Mock Claude client execution
  */
 
-import { ClaudeRequest } from '../../../src/types';
+import { ClaudeRequest, ClaudeStreamEvent } from '../../../src/types';
 
 export interface ClaudeClientMockConfig {
   shouldFailExecution?: boolean;
@@ -19,6 +19,7 @@ export interface ClaudeClientMockConfig {
 export interface MockClaudeClient {
   execute: jest.MockedFunction<(request: ClaudeRequest) => Promise<string>>;
   executeWithSession: jest.MockedFunction<(request: ClaudeRequest, sessionId: string | null, useJsonOutput: boolean) => Promise<string>>;
+  executeStreaming: (request: ClaudeRequest) => AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 
 /**
@@ -74,9 +75,21 @@ export class ClaudeClientMock {
       return this.config.defaultResponse || 'Mock response';
     });
 
+    // Mock streaming: yield the default response as a single text event, then done.
+    const streamConfig = this.config;
+    async function* mockExecuteStreaming(_request: ClaudeRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
+      if (streamConfig.shouldFailExecution) {
+        throw new Error('Claude CLI execution failed');
+      }
+      const text = streamConfig.defaultResponse || 'Mock response';
+      yield { type: 'text', text };
+      yield { type: 'done', finishReason: 'stop' };
+    }
+
     this.mockInstance = {
       execute: mockExecute,
-      executeWithSession: mockExecuteWithSession
+      executeWithSession: mockExecuteWithSession,
+      executeStreaming: mockExecuteStreaming
     };
 
     return this.mockInstance;

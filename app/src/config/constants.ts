@@ -53,9 +53,11 @@ export const DEFAULT_USAGE = {
 export const STREAMING_CONFIG = {
   CHUNK_TIMEOUT_MS: 100,
   FIRST_CHUNK_TIMEOUT_MS: 500,
-  // Must stay above API_CONSTANTS.DEFAULT_TIMEOUT - createStreamingResponse
-  // awaits one full (non-streamed) Claude CLI call before chunking it out, so
-  // this connection has to outlive that whole call, not just typical SSE idle time.
+  // Must stay above API_CONSTANTS.DEFAULT_TIMEOUT - a streaming connection has
+  // to outlive the whole underlying Claude CLI call (which can run to the full
+  // timeout), not just typical SSE idle time. Text now streams incrementally,
+  // but a tool-call request still buffers the CLI's full output before emitting
+  // the tool_calls chunk, so the connection must cover that entire duration.
   CONNECTION_TIMEOUT_MS: 600000,
   HEARTBEAT_INTERVAL_MS: 10000,
   MAX_CHUNK_SIZE: 4096,
