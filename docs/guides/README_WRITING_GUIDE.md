@@ -38,7 +38,7 @@ claude-wrapper --help              # Get real help output with ALL flags and opt
 
 ## Step 4: Document the Installation Method
 
-This package is NOT published to npm. Install it by cloning and building from source:
+Install it by cloning and building from source:
 
 ```markdown
 ## Installation
@@ -336,7 +336,7 @@ This approach gives you **maximum flexibility** while maintaining **security** -
 ✅ **Interactive Prompts Shown** - Show the actual API protection prompt users see
 ✅ **Authentication vs API Protection** - Clear distinction between required vs optional
 ✅ **Project Structure Link** - Link to `docs/PROJECT_STRUCTURE.md`, don't make up file trees
-✅ **License Badge** - Proper license badge, no npm/CI/PR badges (not published, no CI configured)
+✅ **License Badge** - Proper license badge; keep the badge set minimal for a from-source project
 ✅ **OpenAI Tools API Focus** - User-defined functions with client-side execution
 ✅ **Security Emphasis** - Highlight client-side execution, no server-side tool risks
 

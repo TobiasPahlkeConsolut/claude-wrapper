@@ -7,9 +7,8 @@ This document provides the centralized reference for the complete claude-wrapper
 ```
 claude-wrapper/
 ├── .gitignore                              # Git ignore rules for entire project
-├── .npmignore                              # NPM publish ignore rules  
-├── package.json                            # Marketing package.json with global CLI entry
-├── README.md                               # Marketing README for npm/GitHub
+├── package.json                            # Root package.json with global CLI entry
+├── README.md                               # Root project README
 ├── app/                                    # Main application directory
 │   ├── src/                               # Source code
 │   │   ├── api/                           # API layer
@@ -116,21 +115,16 @@ claude-wrapper/
 
 ## 📦 Packaging Structure
 
-### **Root Level (NPM Package)**
-- **package.json**: Marketing package with global CLI binary entry point
+### **Root Level**
+- **package.json**: Root package with global CLI binary entry point
 - **README.md**: User-facing documentation for installation and usage
 - **.gitignore**: Git ignore rules for development workflow
-- **.npmignore**: NPM publish rules (excludes source, tests, docs)
-
-### **Published Files**
-When published to NPM, only these files are included:
-- `app/dist/` - Built application
-- `app/package.json` - Application dependencies
-- `README.md` - Usage documentation
 
 ### **Global CLI Installation**
+Install the CLI from a local clone:
 ```bash
-npm install -g claude-wrapper
+npm install && npm run build
+cd app && npm link
 claude-wrapper --help
 ```
 

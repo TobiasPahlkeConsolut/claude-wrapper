@@ -20,17 +20,14 @@ Based on lessons learned from claude-wrapper, here's how to create a focused, us
 ```markdown
 # Project Name
 
-[![CI Status](https://github.com/ChrisColeTech/scaffold-scripts/workflows/Continuous%20Integration/badge.svg)](https://github.com/ChrisColeTech/scaffold-scripts/actions)
-[![NPM Version](https://img.shields.io/npm/v/scaffold-scripts.svg)](https://www.npmjs.com/package/scaffold-scripts)
-[![NPM Downloads](https://img.shields.io/npm/dm/scaffold-scripts.svg)](https://www.npmjs.com/package/scaffold-scripts)
-[![GitHub Stars](https://img.shields.io/github/stars/ChrisColeTech/scaffold-scripts.svg)](https://github.com/ChrisColeTech/scaffold-scripts/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/yourusername/your-project.svg)](https://github.com/yourusername/your-project/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[![Node Version](https://img.shields.io/node/v/scaffold-scripts.svg)](https://nodejs.org/)
-[![Platform Support](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/ChrisColeTech/scaffold-scripts)
+[![Node Version](https://img.shields.io/node/v/your-project.svg)](https://nodejs.org/)
+[![Platform Support](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue.svg)](https://github.com/yourusername/your-project)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Code Quality](https://img.shields.io/badge/code%20quality-A-brightgreen.svg)](https://github.com/ChrisColeTech/scaffold-scripts)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/ChrisColeTech/scaffold-scripts/pulls)
+[![Code Quality](https://img.shields.io/badge/code%20quality-A-brightgreen.svg)](https://github.com/yourusername/your-project)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/yourusername/your-project/pulls)
 
 **One-line description of what the package does**
 

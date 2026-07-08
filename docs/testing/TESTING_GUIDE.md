@@ -77,35 +77,6 @@ The Claude Wrapper testing framework provides a comprehensive, production-ready 
 
 ---
 
-## 🚀 CI Debugging Workflow
-
-**What it provides**: Systematic methodology for resolving CI build failures when tests pass locally but fail in continuous integration.
-
-**Common Failure Patterns**:
-- TypeScript compilation errors after singleton refactoring
-- Global state pollution between tests
-- Environment differences (local vs CI)
-- Race conditions and timing issues
-
-**5-Step Resolution Process**:
-1. **Gather CI Failure Information** - Using GitHub CLI tools
-2. **Reproduce Locally** - With CI-like conditions
-3. **Analyze Failure Pattern** - Categorize the specific issue type
-4. **Apply Targeted Fixes** - Issue-specific solutions
-5. **Validate Fix** - Automated verification
-
-**Proven Fix Patterns**:
-- Singleton factory function updates
-- Test isolation cleanup
-- Async operation handling
-- URL encoding for special characters
-
-**Success Metrics**: <30 minutes resolution time, >95% first-attempt fix success rate.
-
-👉 **[See Full Details: CI Debugging Workflow](CI_DEBUGGING.md)**
-
----
-
 ## 🧪 Test Types and Patterns
 
 **What it provides**: Comprehensive guide to test doubles (mocks, stubs, shims) and testing patterns used in the Claude Wrapper framework.
@@ -154,7 +125,7 @@ The Claude Wrapper testing framework provides a comprehensive, production-ready 
 - Environment setup differences
 - Performance optimization settings
 
-**CI Integration**: Proper configuration for GitHub Actions, build systems, and cross-platform compatibility.
+**CI Integration**: Proper configuration for build systems and cross-platform compatibility.
 
 👉 **[See Full Details: Configuration Guide](CONFIGURATION.md)**
 

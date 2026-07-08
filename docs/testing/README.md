@@ -33,13 +33,6 @@ Comprehensive Jest configuration guide with lessons learned:
 - Common pitfalls and solutions with examples
 - Configuration troubleshooting and best practices
 
-### **[CI Debugging Workflow](CI_DEBUGGING.md)**
-Step-by-step methodology for resolving CI build failures:
-- Common failure patterns identification
-- Systematic debugging approaches
-- Proven fix patterns with examples
-- Case studies and lessons learned
-
 ---
 
 ## 🎯 Key Achievements
