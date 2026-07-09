@@ -55,13 +55,6 @@ let mockProcess: ReturnType<typeof ProcessSignalMockSetup.setup>;
 mockProcess = ProcessSignalMockSetup.setup();
 (global as any).process = mockProcess;
 
-// Mock the dynamic import for session manager
-jest.mock('../../../src/session/manager', () => ({
-  sessionManager: {
-    shutdown: jest.fn().mockResolvedValue(undefined)
-  }
-}), { virtual: true });
-
 describe('Signal Handler', () => {
   let signalHandler: SignalHandler;
   let mockServer: ReturnType<typeof ServerSignalMockSetup.setup>;
@@ -137,13 +130,6 @@ describe('Signal Handler', () => {
         expect.objectContaining({
           step: 1,
           name: 'Close HTTP Server'
-        })
-      );
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        'Shutdown step registered',
-        expect.objectContaining({
-          step: 2,
-          name: 'Cleanup Sessions'
         })
       );
       expect(mockLogger.debug).toHaveBeenCalledWith(

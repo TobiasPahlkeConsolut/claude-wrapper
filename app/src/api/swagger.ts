@@ -66,11 +66,6 @@ const swaggerDefinition: OpenAPIV3.Document = {
             description: 'Enable streaming responses',
             default: false
           },
-          session_id: {
-            type: 'string',
-            description: 'Session ID for conversation continuity',
-            example: 'my-conversation-session'
-          },
           tools: {
             type: 'array',
             description: 'Available tools for function calling',

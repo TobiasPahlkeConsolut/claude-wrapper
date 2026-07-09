@@ -6,7 +6,6 @@ import { requestLoggingMiddleware, errorLoggingMiddleware } from './middleware/l
 import chatRoutes from './routes/chat';
 import modelsRoutes from './routes/models';
 import healthRoutes from './routes/health';
-import sessionRoutes from './routes/sessions';
 import authRoutes from './routes/auth';
 import logsRoutes from './routes/logs';
 // WSL port-forwarding route disabled (WSL support turned off for performance).
@@ -66,7 +65,6 @@ app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 // Routes
 app.use('/', healthRoutes);
 app.use('/', modelsRoutes);
-app.use('/', sessionRoutes);
 app.use('/', authRoutes);
 app.use('/', logsRoutes);
 // app.use('/', portForwardingRoutes); // WSL port-forwarding disabled for performance
