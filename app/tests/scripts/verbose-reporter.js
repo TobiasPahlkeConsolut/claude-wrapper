@@ -192,15 +192,20 @@ class VerboseReporter {
   }
 
   onTestResult(test, testResult) {
-    const { testFilePath, testResults } = testResult;
+    const { testFilePath, testResults, testExecError, failureMessage } = testResult;
     const relativePath = path.relative(process.cwd(), testFilePath);
     const filename = path.basename(testFilePath, '.ts') + '-verbose.txt';
-    
+
     const passingTests = testResults.filter(t => t.status === 'passed');
     const failingTests = testResults.filter(t => t.status === 'failed');
     const skippedTests = testResults.filter(t => t.status === 'skipped');
-    
-    const hasFailing = failingTests.length > 0;
+
+    // A suite can fail to run entirely (compile error / load throw); then
+    // testResults is empty and the error is on testExecError/failureMessage.
+    const suiteError = testExecError
+      ? (testExecError.stack || testExecError.message || String(testExecError))
+      : (failureMessage || null);
+    const hasFailing = failingTests.length > 0 || !!suiteError;
     const targetDir = hasFailing ? this.failDir : this.passDir;
     const statusIcon = hasFailing ? '❌' : '✅';
     
@@ -239,6 +244,13 @@ class VerboseReporter {
       });
     }
     
+    // Suite-level failure (no tests executed)
+    if (suiteError) {
+      output += `\n\n❌ SUITE FAILED TO RUN (no tests executed):\n`;
+      output += `${'='.repeat(80)}\n`;
+      output += `${suiteError}\n`;
+    }
+
     // Detailed skipped tests
     if (skippedTests.length > 0) {
       output += `\n\n⏭️  SKIPPED TESTS DETAILED BREAKDOWN:\n`;
@@ -278,10 +290,15 @@ class VerboseReporter {
       console.log(`   📁 Verbose details: ${filePath}`);
       
       if (hasFailing) {
-        console.log(`   ❌ ${failingTests.length} failing test(s):`);
-        failingTests.forEach(test => {
-          console.log(`      • ${test.title}`);
-        });
+        if (suiteError) {
+          console.log(`   ❌ Suite failed to run: ${suiteError.replace(/\[[0-9;]*m/g, '').split('\n')[0]}`);
+        }
+        if (failingTests.length > 0) {
+          console.log(`   ❌ ${failingTests.length} failing test(s):`);
+          failingTests.forEach(test => {
+            console.log(`      • ${test.title}`);
+          });
+        }
         console.log(`   🔍 Full error details available in verbose log file`);
       } else {
         console.log(`   ✅ ${passingTests.length} test(s) passed`);
@@ -293,7 +310,7 @@ class VerboseReporter {
   }
 
   onRunComplete(contexts, results) {
-    const { numFailedTests, numPassedTests, numTotalTests, startTime, testResults } = results;
+    const { numFailedTests, numPassedTests, numTotalTests, numFailedTestSuites, numTotalTestSuites, startTime } = results;
     const duration = Date.now() - startTime;
     
     // Generate comprehensive run summary
@@ -305,7 +322,10 @@ class VerboseReporter {
     summaryOutput += `✅ Passed: ${numPassedTests}\n`;
     summaryOutput += `❌ Failed: ${numFailedTests}\n`;
     summaryOutput += `📊 Total: ${numTotalTests}\n`;
-    summaryOutput += `🎯 Success Rate: ${((numPassedTests / numTotalTests) * 100).toFixed(2)}%\n`;
+    if (numFailedTestSuites > 0) {
+      summaryOutput += `🚨 Suites failed to run: ${numFailedTestSuites}/${numTotalTestSuites}\n`;
+    }
+    summaryOutput += `🎯 Success Rate: ${numTotalTests > 0 ? ((numPassedTests / numTotalTests) * 100).toFixed(2) : '0.00'}%\n`;
     
     // Add environment summary
     summaryOutput += `\n🌍 Environment Summary:\n`;
@@ -327,9 +347,12 @@ class VerboseReporter {
     console.log(`🔬 VERBOSE TEST RUN COMPLETE (${duration}ms)`);
     console.log(`✅ Passed: ${numPassedTests}`);
     console.log(`❌ Failed: ${numFailedTests}`);
+    if (numFailedTestSuites > 0) {
+      console.log(`🚨 Suites failed to run: ${numFailedTestSuites}/${numTotalTestSuites}`);
+    }
     console.log(`📊 Total: ${numTotalTests}`);
-    
-    if (numFailedTests > 0) {
+
+    if (numFailedTests > 0 || numFailedTestSuites > 0) {
       console.log(`\n🔍 Detailed failure analysis saved to: ${this.failDir}`);
     }
     

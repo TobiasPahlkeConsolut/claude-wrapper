@@ -51,15 +51,22 @@ class CustomReporter {
   }
 
   onTestResult(test, testResult) {
-    const { testFilePath, testResults } = testResult;
+    const { testFilePath, testResults, testExecError, failureMessage } = testResult;
     const relativePath = path.relative(process.cwd(), testFilePath);
     const filename = path.basename(testFilePath, '.ts') + '.txt';
-    
+
     const passingTests = testResults.filter(t => t.status === 'passed');
     const failingTests = testResults.filter(t => t.status === 'failed');
     const skippedTests = testResults.filter(t => t.status === 'skipped');
-    
-    const hasFailing = failingTests.length > 0;
+
+    // A suite can fail to run entirely (TypeScript/compile error, or a throw
+    // during module load). Then testResults is empty and there are no per-test
+    // failures — the error lives on testExecError/failureMessage. Count it as a
+    // failure so a broken suite can't masquerade as a passing one.
+    const suiteError = testExecError
+      ? (testExecError.stack || testExecError.message || String(testExecError))
+      : (failureMessage || null);
+    const hasFailing = failingTests.length > 0 || !!suiteError;
     const targetDir = hasFailing ? this.failDir : this.passDir;
     const statusIcon = hasFailing ? '❌' : '✅';
     
@@ -101,7 +108,17 @@ class CustomReporter {
         output += '\n';
       });
     }
-    
+
+    if (suiteError) {
+      const cleanMessage = suiteError
+        .replace(/\[[0-9;]*m/g, '')
+        .split('\n')
+        .slice(0, 10)
+        .join('\n');
+      output += '🚨 Suite failed to run (no tests executed):\n';
+      output += `     💡 ${cleanMessage}\n\n`;
+    }
+
     if (skippedTests.length > 0) {
       output += '⏭️  Skipped Tests:\n';
       skippedTests.forEach(test => {
@@ -118,6 +135,10 @@ class CustomReporter {
       // Console output
       if (hasFailing) {
         console.log(`\n${statusIcon} FAIL ${relativePath}`);
+        if (suiteError) {
+          const shortMessage = suiteError.replace(/\[[0-9;]*m/g, '').split('\n')[0];
+          console.log(`  ❌ Suite failed to run: ${shortMessage}`);
+        }
         failingTests.forEach(test => {
           console.log(`  ❌ ${test.title}`);
           if (test.failureMessages && test.failureMessages.length > 0) {
@@ -136,16 +157,19 @@ class CustomReporter {
   }
 
   onRunComplete(contexts, results) {
-    const { numFailedTests, numPassedTests, numTotalTests, startTime } = results;
+    const { numFailedTests, numPassedTests, numTotalTests, numFailedTestSuites, numTotalTestSuites, startTime } = results;
     const duration = Date.now() - startTime;
-    
+
     console.log('\n============================================================');
     console.log(`📊 Test Run Complete (${duration}ms)`);
     console.log(`✅ Passed: ${numPassedTests}`);
     console.log(`❌ Failed: ${numFailedTests}`);
+    if (numFailedTestSuites > 0) {
+      console.log(`🚨 Suites failed to run: ${numFailedTestSuites}/${numTotalTestSuites}`);
+    }
     console.log(`📊 Total: ${numTotalTests}`);
-    
-    if (numFailedTests > 0) {
+
+    if (numFailedTests > 0 || numFailedTestSuites > 0) {
       console.log(`\n🔍 Failed test details saved to: ${this.failDir}`);
     }
     
