@@ -564,11 +564,19 @@ You can register Claude Wrapper as a custom, OpenAI-compatible model provider in
 - **Generic aliases** — `fable`, `opus`, `sonnet`, `haiku`. Each resolves to the latest model in that tier, so you get upgrades automatically.
 - **Pinned versions** — e.g. `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5`. These stay fixed to an exact model.
 
-Use whichever you prefer in the `id` field; both are accepted. (Since model validation is enforced, the `id` must be one of the values returned by `/v1/models`.)
+Use whichever you prefer in the `id` field; both are accepted. Model validation is enforced, so the **base** of the `id` (the part before any `:<effort>` suffix — see [Reasoning effort](#reasoning-effort)) must be one of the values returned by `/v1/models`.
 
-### Example configuration (generic aliases)
+### Reasoning effort
 
-This uses the generic aliases so you always follow the latest model per tier:
+Append `:<effort>` to any model id to control how much reasoning the model spends per turn — one of `low`, `medium`, `high`, `xhigh`, `max`. Higher levels think longer (more capable on hard problems, but slower and costlier); lower levels respond faster.
+
+- The wrapper passes the base to the CLI's `--model` flag and the effort to `--effort`.
+- **Omit the suffix** (e.g. `"id": "opus"`) to leave effort at the CLI's own default — whatever `effortLevel` is configured for the account running the wrapper, or the built-in per-model default if none is set.
+- A common setup is two entries per model — `:low` for fast everyday work and `:high` for hard problems — which is what the example below uses.
+
+### Example configuration (generic aliases, two effort tiers)
+
+This uses the generic aliases (so you always follow the latest model per tier) and gives each model a fast (`:low`) and a deep (`:high`) entry:
 
 ```json
 [
@@ -577,8 +585,8 @@ This uses the generic aliases so you always follow the latest model per tier:
     "vendor": "customendpoint",
     "models": [
       {
-        "id": "fable",
-        "name": "Fable",
+        "id": "opus:low",
+        "name": "Opus (fast)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -586,8 +594,8 @@ This uses the generic aliases so you always follow the latest model per tier:
         "maxOutputTokens": 128000
       },
       {
-        "id": "opus",
-        "name": "Opus",
+        "id": "opus:high",
+        "name": "Opus (deep)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -595,8 +603,8 @@ This uses the generic aliases so you always follow the latest model per tier:
         "maxOutputTokens": 128000
       },
       {
-        "id": "sonnet",
-        "name": "Sonnet",
+        "id": "sonnet:low",
+        "name": "Sonnet (fast)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -604,8 +612,26 @@ This uses the generic aliases so you always follow the latest model per tier:
         "maxOutputTokens": 128000
       },
       {
-        "id": "haiku",
-        "name": "Haiku",
+        "id": "sonnet:high",
+        "name": "Sonnet (deep)",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "haiku:low",
+        "name": "Haiku (fast)",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 200000,
+        "maxOutputTokens": 64000
+      },
+      {
+        "id": "haiku:high",
+        "name": "Haiku (deep)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -619,8 +645,8 @@ This uses the generic aliases so you always follow the latest model per tier:
 
 ### Notes
 
-- `id` is sent to the wrapper (and on to the CLI's `--model`); `name` is only the label in the VS Code model picker.
-- To pin an exact version, use a pinned id (e.g. `"id": "claude-sonnet-5"`). Aliases and pinned ids can be mixed in the same list.
+- `id` is sent to the wrapper; its base goes to the CLI's `--model` and any `:<effort>` suffix to `--effort`. `name` is only the label in the VS Code model picker.
+- To pin an exact version, use a pinned id, with or without effort (e.g. `"id": "claude-sonnet-5:high"`). Aliases and pinned ids can be mixed in the same list.
 - If you enabled API-key protection, supply the key in your Copilot provider configuration so requests carry `Authorization: Bearer <key>`.
 - `vision` is `false`: the wrapper sends the conversation to the CLI as text, so image inputs are not supported.
 - Copilot always sends a `tools` array, so those requests are buffered in full and returned when complete (see [Streaming](#streaming)) — plain chat without tools still streams token-by-token. This keeps tool calls reliable regardless of how the model formats them, at the cost of intra-response streaming on tool-carrying turns.

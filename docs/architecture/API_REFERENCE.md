@@ -71,7 +71,7 @@ Create a chat completion using Claude Code CLI.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `model` | string | Yes | Model identifier (e.g., "claude-opus-4-8") |
+| `model` | string | Yes | Model identifier from `GET /v1/models` (e.g., `"opus"`, `"claude-opus-4-8"`), optionally with an effort suffix `:<low\|medium\|high\|xhigh\|max>` (e.g., `"opus:high"`) to set the CLI's reasoning `--effort`. Omit the suffix to use the CLI default. |
 | `messages` | array | Yes | Array of conversation messages |
 | `max_tokens` | integer | No | Maximum tokens in response (default: 1000) |
 | `temperature` | number | No | Sampling temperature 0-2 (default: 0.7) |
@@ -221,7 +221,13 @@ model IDs for callers that want an exact version.
 }
 ```
 
-Update `app/src/api/routes/models.ts` when new models ship — see
+These are the base identifiers. In a chat request you may append a reasoning-effort
+suffix to any of them — `:<low|medium|high|xhigh|max>`, e.g. `opus:high` — which the
+wrapper passes to the CLI's `--effort` flag; the base (before the `:`) is what must
+match this list. Omitting the suffix leaves effort at the CLI default. The suffixed
+variants are not enumerated here; the base list is the allowlist.
+
+Update `app/src/config/models.ts` when new models ship — see
 `shared/models.md` in the claude-api skill for current model IDs.
 
 ### **Health Check**

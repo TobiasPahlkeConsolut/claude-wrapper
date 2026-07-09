@@ -9,6 +9,7 @@ import { IClaudeResolver, ClaudeStreamEvent, OpenAIUsage } from '../types';
 import { ClaudeCliError, TimeoutError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { EnvironmentManager } from '../config/env';
+import { parseModelSpec } from '../config/models';
 
 const execAsync = promisify(exec);
 
@@ -143,6 +144,22 @@ export class ClaudeResolver implements IClaudeResolver {
     );
   }
 
+  /**
+   * Split a caller's model id (`opus` or `opus:high`) into the base model for
+   * --model and an optional effort level for --effort. The chat route has
+   * already validated the id against the allowlist; parseModelSpec re-applies
+   * the same rules here to do the split. If it somehow doesn't parse (e.g. a
+   * unit test passing the resolver a raw model directly), fall back to the
+   * string as-is with no effort, preserving prior behavior.
+   */
+  private resolveModel(model: string): { baseModel: string; effort?: string } {
+    const spec = parseModelSpec(model);
+    if (!spec) {
+      return { baseModel: model };
+    }
+    return { baseModel: spec.model, ...(spec.effort && { effort: spec.effort }) };
+  }
+
   async executeClaudeCommand(
     prompt: string,
     model: string,
@@ -150,6 +167,7 @@ export class ClaudeResolver implements IClaudeResolver {
   ): Promise<string> {
     const claudeCmd = await this.findClaudeCommand();
     const config = EnvironmentManager.getConfig();
+    const { baseModel, effort } = this.resolveModel(model);
 
     // Build command flags. This wrapper is a text/JSON completion backend -
     // the caller (VS Code, etc.) owns tool execution and expects it back via
@@ -159,7 +177,14 @@ export class ClaudeResolver implements IClaudeResolver {
     // "No such tool available" narration instead of an answer. --safe-mode
     // additionally skips CLAUDE.md/MCP/plugins/hooks so a request isn't
     // shaped by whatever happens to be configured in this process's cwd.
-    let flags = `--print --model ${model} --safe-mode --tools ""`;
+    let flags = `--print --model ${baseModel} --safe-mode --tools ""`;
+
+    // Effort is opt-in per model id (`opus:high`). When absent, we pass no
+    // --effort flag, so the CLI keeps its own default effort (the effortLevel
+    // setting of whoever runs this process, else the built-in per-model default).
+    if (effort) {
+      flags += ` --effort ${effort}`;
+    }
 
     let command: string;
 
@@ -199,7 +224,8 @@ export class ClaudeResolver implements IClaudeResolver {
     }
 
     logger.debug('Executing Claude command', {
-      model,
+      model: baseModel,
+      effort: effort ?? '(cli default)',
       promptLength: prompt.length,
       hasSystemPrompt: !!systemPrompt,
       isDocker: claudeCmd.includes('docker') || claudeCmd.includes('podman')
@@ -261,6 +287,7 @@ export class ClaudeResolver implements IClaudeResolver {
   ): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
     const claudeCmd = await this.findClaudeCommand();
     const config = EnvironmentManager.getConfig();
+    const { baseModel, effort } = this.resolveModel(model);
 
     let systemPromptFile: string | null = null;
     if (systemPrompt) {
@@ -269,22 +296,27 @@ export class ClaudeResolver implements IClaudeResolver {
     }
 
     // Same completion flags as the buffered path (see executeClaudeCommand
-    // for why --safe-mode --tools "" are required), plus the streaming output format.
+    // for why --safe-mode --tools "" and the opt-in --effort are used), plus
+    // the streaming output format.
     const args = [
       '--print',
-      '--model', model,
+      '--model', baseModel,
       '--safe-mode',
       '--tools', '',
       '--output-format', 'stream-json',
       '--include-partial-messages',
       '--verbose',
     ];
+    if (effort) {
+      args.push('--effort', effort);
+    }
     if (systemPromptFile) {
       args.push('--system-prompt-file', systemPromptFile);
     }
 
     logger.debug('Streaming Claude command', {
-      model,
+      model: baseModel,
+      effort: effort ?? '(cli default)',
       promptLength: prompt.length,
       hasSystemPrompt: !!systemPrompt,
     });

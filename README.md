@@ -246,7 +246,7 @@ Cache usage is logged at **debug** level. Enable it with `wrapper --debug` (fore
 
 You can use this wrapper as a custom model provider in VS Code by pointing Copilot's OpenAI-compatible endpoint at `http://localhost:8000/v1/`. The wrapper serves both `/v1/models` (for discovery) and `/v1/chat/completions` (with real streaming).
 
-Add the following to your model configuration. This uses the **generic aliases**, so you automatically follow the latest model in each tier:
+Add the following to your model configuration. It uses the **generic aliases** (so you automatically follow the latest model in each tier) and gives each model two entries — a **fast** (`:low`) and a **deep** (`:high`) reasoning-effort tier (see [Reasoning effort](#reasoning-effort) below):
 
 ```json
 [
@@ -255,8 +255,8 @@ Add the following to your model configuration. This uses the **generic aliases**
     "vendor": "customendpoint",
     "models": [
       {
-        "id": "fable",
-        "name": "Fable",
+        "id": "opus:low",
+        "name": "Opus (fast)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -264,8 +264,8 @@ Add the following to your model configuration. This uses the **generic aliases**
         "maxOutputTokens": 128000
       },
       {
-        "id": "opus",
-        "name": "Opus",
+        "id": "opus:high",
+        "name": "Opus (deep)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -273,8 +273,8 @@ Add the following to your model configuration. This uses the **generic aliases**
         "maxOutputTokens": 128000
       },
       {
-        "id": "sonnet",
-        "name": "Sonnet",
+        "id": "sonnet:low",
+        "name": "Sonnet (fast)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -282,8 +282,26 @@ Add the following to your model configuration. This uses the **generic aliases**
         "maxOutputTokens": 128000
       },
       {
-        "id": "haiku",
-        "name": "Haiku",
+        "id": "sonnet:high",
+        "name": "Sonnet (deep)",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 1000000,
+        "maxOutputTokens": 128000
+      },
+      {
+        "id": "haiku:low",
+        "name": "Haiku (fast)",
+        "url": "http://localhost:8000/v1/",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 200000,
+        "maxOutputTokens": 64000
+      },
+      {
+        "id": "haiku:high",
+        "name": "Haiku (deep)",
         "url": "http://localhost:8000/v1/",
         "toolCalling": true,
         "vision": false,
@@ -295,10 +313,15 @@ Add the following to your model configuration. This uses the **generic aliases**
 ]
 ```
 
+### Reasoning effort
+
+Append `:<effort>` to any model id to control how much reasoning the model spends per turn — one of `low`, `medium`, `high`, `xhigh`, `max`. Higher levels think longer (more capable on hard problems, but slower and costlier); lower levels respond faster. The config above exposes just two tiers per model — `:low` (fast) for everyday edits and questions, `:high` (deep) for debugging, refactors, and architecture — which keeps the picker short; add `:max` or others if you want them.
+
 Notes:
 
-- `id` is the value sent to the wrapper (and on to the CLI's `--model`); it must be one of the models listed by `GET /v1/models`. `name` is just the label shown in the VS Code model picker.
-- To pin an exact version instead of following the latest, use a pinned id (e.g. `"id": "claude-sonnet-5"`). You can mix aliases and pinned ids in the same list.
+- `id` is the value sent to the wrapper. Its **base** (the part before the `:`) must be one of the models listed by `GET /v1/models`; the `:<effort>` suffix is optional. `name` is just the label shown in the VS Code model picker.
+- **Omit the suffix** (e.g. `"id": "opus"`) to leave effort at the CLI's own default — whatever `effortLevel` is configured for the account running the wrapper, or the built-in per-model default if none is set.
+- To pin an exact version instead of following the latest, use a pinned id, with or without effort (e.g. `"id": "claude-sonnet-5:high"`). You can mix aliases and pinned ids in the same list.
 - If you enabled API-key protection, add your key to the provider configuration as required by your Copilot setup so requests include `Authorization: Bearer <key>`.
 - `vision` is `false` because the wrapper passes the conversation to the CLI as text; image inputs are not supported.
 

@@ -38,8 +38,8 @@ const swaggerDefinition: OpenAPIV3.Document = {
         properties: {
           model: {
             type: 'string',
-            description: 'Model identifier',
-            example: 'claude-3-5-sonnet-20241022'
+            description: 'Model identifier from GET /v1/models, optionally with an effort suffix ":<low|medium|high|xhigh|max>" (e.g. "opus:high") to set the CLI\'s reasoning --effort. Omit the suffix to use the CLI default.',
+            example: 'opus:high'
           },
           messages: {
             type: 'array',

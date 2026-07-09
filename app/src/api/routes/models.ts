@@ -1,39 +1,26 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/error';
 import { logger } from '../../utils/logger';
+import { BASE_MODEL_IDS } from '../../config/models';
+
+// Re-exported for callers that validate an incoming model string (the chat
+// route). The allowlist and the parsing rules live in config/models so the
+// route, the validator, and the CLI invocation can't drift apart.
+export { VALID_MODEL_IDS, isValidModel } from '../../config/models';
 
 const router = Router();
 
-// Claude models available via the `claude` CLI's --model flag.
-// Short aliases (fable/opus/sonnet/haiku) resolve to the latest model in that
-// tier; the full IDs let a caller pin an exact version. Keep in sync with
-// shared/models.md in the claude-api skill when new models ship.
-const CLAUDE_MODELS = [
-  // Latest-of-tier aliases
-  { id: 'fable', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'opus', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'sonnet', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'haiku', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-
-  // Pinned full model IDs
-  { id: 'claude-fable-5', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'claude-opus-4-8', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'claude-opus-4-7', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'claude-opus-4-6', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'claude-sonnet-5', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'claude-sonnet-4-6', object: 'model', owned_by: 'anthropic', created: 1709164800 },
-  { id: 'claude-haiku-4-5', object: 'model', owned_by: 'anthropic', created: 1709164800 }
-];
-
-// Allowlist of model identifiers we will pass to the `claude` CLI's --model
-// flag. Validating against this set is what prevents a caller-supplied model
-// from carrying shell metacharacters into the CLI invocation (the non-streaming
-// path builds its command via a shell). Keep in sync with CLAUDE_MODELS above.
-export const VALID_MODEL_IDS: ReadonlySet<string> = new Set(CLAUDE_MODELS.map(m => m.id));
-
-export function isValidModel(model: string): boolean {
-  return VALID_MODEL_IDS.has(model);
-}
+// The `/v1/models` discovery payload, built from the shared allowlist so it
+// always lists exactly the base models the CLI will accept. Callers append an
+// optional `:<effort>` suffix (e.g. `opus:high`) to pick a reasoning-effort
+// tier per config entry — see VALID_EFFORT_LEVELS — rather than enumerating
+// every model×effort combination here.
+const CLAUDE_MODELS = BASE_MODEL_IDS.map((id) => ({
+  id,
+  object: 'model',
+  owned_by: 'anthropic',
+  created: 1709164800,
+}));
 
 router.get('/v1/models', asyncHandler(async (_req: Request, res: Response) => {
   logger.info('Returning available Claude models', { count: CLAUDE_MODELS.length });

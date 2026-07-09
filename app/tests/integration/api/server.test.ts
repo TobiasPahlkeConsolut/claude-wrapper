@@ -185,6 +185,53 @@ describe('API Integration Tests', () => {
       expect(mockHandleChatCompletion).not.toHaveBeenCalled();
     });
 
+    it('should accept an effort-suffixed model id (e.g. opus:high)', async () => {
+      const mockResponse = {
+        id: 'chatcmpl-eff',
+        object: 'chat.completion' as const,
+        created: 1677652288,
+        model: 'opus:high',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant' as const, content: 'ok' },
+          finish_reason: 'stop' as const
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
+      };
+      mockHandleChatCompletion.mockResolvedValue(mockResponse);
+
+      const requestBody = {
+        model: 'opus:high',
+        messages: [{ role: 'user', content: 'Hello' }]
+      };
+
+      const response = await request(app)
+        .post('/v1/chat/completions')
+        .send(requestBody)
+        .expect(200);
+
+      expect(response.body).toEqual(mockResponse);
+      // The full id (base + effort) flows through to the wrapper untouched; the
+      // resolver is what splits it into --model/--effort at the CLI boundary.
+      expect(mockHandleChatCompletion).toHaveBeenCalledWith(requestBody);
+    });
+
+    it('should reject a model with an unknown effort suffix', async () => {
+      const requestBody = {
+        model: 'opus:ultra',
+        messages: [{ role: 'user', content: 'Hello' }]
+      };
+
+      const response = await request(app)
+        .post('/v1/chat/completions')
+        .send(requestBody)
+        .expect(400);
+
+      expect(response.body.error.code).toBe('INVALID_REQUEST');
+      expect(response.body.error.message).toMatch(/Unsupported model/);
+      expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+    });
+
     it('should reject request with invalid message role', async () => {
       const requestBody = {
         model: 'claude-sonnet-5',
