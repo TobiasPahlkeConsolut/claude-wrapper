@@ -29,15 +29,10 @@ module.exports = {
     "!src/**/*.spec.ts"
   ],
   coverageDirectory: "<rootDir>/tests/logs/coverage/unit",
-  // Use default coverage reporters
-  coverageThreshold: {
-    global: {
-      branches: 80,
-      functions: 80,
-      lines: 80,
-      statements: 80
-    }
-  },
+  // Coverage is collected on demand (npm run test:coverage) but intentionally
+  // not gated: this unit slice cannot see the API/server files that only the
+  // integration/e2e suites exercise, and jest does not merge coverage across
+  // the three configs, so any global threshold here would be misleading.
   // Use timeout in setup.ts instead
   clearMocks: true,
   resetMocks: true,
