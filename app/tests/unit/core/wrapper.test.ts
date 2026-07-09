@@ -725,6 +725,135 @@ describe('CoreWrapper', () => {
     });
   });
 
+  describe('bare tool-name recovery (no JSON envelope)', () => {
+    // The model sometimes drops the {"tool_calls":[...]} envelope entirely and
+    // emits just the bare tool name followed by its arguments object. Confirmed
+    // from a live VS Code / ADT capture: after two successful tool calls, the
+    // third turn arrived as `mcp_adt_..._activate_objects\n{"uris":[...]}` and
+    // leaked to the client as visible text. The request's own tool list is used
+    // as an allowlist to recover it without matching prose that merely mentions
+    // a tool name.
+    async function collect(req: OpenAIRequest): Promise<any[]> {
+      const events: any[] = [];
+      for await (const event of wrapper.streamChatCompletion(req)) events.push(event);
+      return events;
+    }
+
+    const activateReq = (): OpenAIRequest => ({
+      model: 'sonnet',
+      messages: [{ role: 'user', content: 'Now activate the object' }],
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'mcp_adt_mcp_serve_abap_activate_objects', parameters: {} } }]
+    });
+
+    it('recovers a bare tool name followed by its arguments object as a real tool call', async () => {
+      ClaudeClientMock.setDefaultResponse(
+        'mcp_adt_mcp_serve_abap_activate_objects\n' +
+        '{"uris":["abap:/repotree-v1/H34_100_TOBIASP_EN/Local%20Objects/TOBIASP/Classes/ZCL_TOP_TEST/zcl_top_test.clas.abap"]}'
+      );
+
+      const events = await collect(activateReq());
+
+      const toolEvent = events.find(e => e.type === 'tool_calls');
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent.toolCalls[0].function.name).toBe('mcp_adt_mcp_serve_abap_activate_objects');
+      const args = JSON.parse(toolEvent.toolCalls[0].function.arguments);
+      expect(args.uris[0]).toContain('zcl_top_test.clas.abap');
+      // Nothing leaked as visible text
+      expect(events.some(e => e.type === 'text')).toBe(false);
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
+      );
+    });
+
+    it('recovers the bare shape even when the model narrates before naming the tool', async () => {
+      ClaudeClientMock.setDefaultResponse(
+        'The edit is applied. Now let me activate the object.\n\n' +
+        'mcp_adt_mcp_serve_abap_activate_objects\n{"uris":["abap:/x/zcl_top_test.clas.abap"]}'
+      );
+
+      const events = await collect(activateReq());
+
+      const toolEvent = events.find(e => e.type === 'tool_calls');
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent.toolCalls[0].function.name).toBe('mcp_adt_mcp_serve_abap_activate_objects');
+      expect(events.some(e => e.type === 'text')).toBe(false);
+    });
+
+    it('recovers a bare name with a colon separator before the arguments', async () => {
+      ClaudeClientMock.setDefaultResponse(
+        'mcp_adt_mcp_serve_abap_activate_objects: {"uris":["abap:/x/zcl_top_test.clas.abap"]}'
+      );
+
+      const events = await collect(activateReq());
+
+      const toolEvent = events.find(e => e.type === 'tool_calls');
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent.toolCalls[0].function.name).toBe('mcp_adt_mcp_serve_abap_activate_objects');
+      expect(events.some(e => e.type === 'text')).toBe(false);
+    });
+
+    it('recovers multiple bare calls in one response, in order', async () => {
+      const req: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Weather in two cities' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }]
+      };
+      ClaudeClientMock.setDefaultResponse(
+        'get_weather\n{"location":"New York"}\nget_weather\n{"location":"London"}'
+      );
+
+      const events = await collect(req);
+
+      const toolEvent = events.find(e => e.type === 'tool_calls');
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent.toolCalls).toHaveLength(2);
+      expect(JSON.parse(toolEvent.toolCalls[0].function.arguments).location).toBe('New York');
+      expect(JSON.parse(toolEvent.toolCalls[1].function.arguments).location).toBe('London');
+      expect(events.some(e => e.type === 'text')).toBe(false);
+    });
+
+    it('does NOT treat a prose mention of a tool name (no object after it) as a call', async () => {
+      const req: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'How do I check the weather?' }],
+        stream: true,
+        tools: [{ type: 'function', function: { name: 'get_weather', parameters: {} } }]
+      };
+      const prose = 'You can call get_weather with a location to check, but it is already sunny today.';
+      ClaudeClientMock.setDefaultResponse(prose);
+
+      const events = await collect(req);
+
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+      const text = events.filter(e => e.type === 'text').map((e: any) => e.text).join('');
+      expect(text).toBe(prose);
+    });
+
+    it('does NOT recover the bare shape when the arguments object is truncated (leaks as text)', async () => {
+      const truncated = 'mcp_adt_mcp_serve_abap_activate_objects\n{"uris":["abap:/x/zcl_top_test.clas.abap"';
+      ClaudeClientMock.setDefaultResponse(truncated);
+
+      const events = await collect(activateReq());
+
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+      const text = events.filter(e => e.type === 'text').map((e: any) => e.text).join('');
+      expect(text).toBe(truncated);
+    });
+
+    it('does NOT recover the bare shape on a length-truncated turn', async () => {
+      ClaudeClientMock.setDefaultResponse(
+        'mcp_adt_mcp_serve_abap_activate_objects\n{"uris":["abap:/x/zcl_top_test.clas.abap"]}'
+      );
+      ClaudeClientMock.setStreamFinishReason('length');
+
+      const events = await collect(activateReq());
+
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle empty messages array', async () => {
       const request: OpenAIRequest = {

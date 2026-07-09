@@ -170,7 +170,8 @@ export class CoreWrapper implements ICoreWrapper {
   private tryParseMinimalToolCalls(
     response: string,
     model: string,
-    allowStructuralRepair = false
+    allowStructuralRepair = false,
+    toolNames: string[] = []
   ): OpenAIResponse | null {
     // The model is asked to respond with nothing but the JSON object, but
     // often prefaces it with a sentence anyway ("I'll check that.\n\n{...}").
@@ -191,6 +192,14 @@ export class CoreWrapper implements ICoreWrapper {
       // instead of leaking the whole thing to the client as visible text.
       if (!extracted && allowStructuralRepair) {
         extracted = this.repairUnclosedToolCallsJson(response);
+      }
+      // Last resort: the model dropped the JSON envelope entirely and emitted
+      // just the bare tool name followed by its arguments object. Recognize it
+      // using the caller's own tool list as an allowlist (see
+      // recoverToolCallsByName). Gated on a clean stop for the same reason as
+      // the bracket repair: a length-truncated turn is genuinely incomplete.
+      if (!extracted && allowStructuralRepair && toolNames.length > 0) {
+        extracted = this.recoverToolCallsByName(response, toolNames);
       }
       if (!extracted) {
         return null;
@@ -385,6 +394,154 @@ export class CoreWrapper implements ICoreWrapper {
   }
 
   /**
+   * Last-resort recovery for a tool call the model emitted with NO JSON
+   * envelope at all — just the bare tool name (exactly as it appears in the
+   * request's tool list) followed by its arguments object, e.g.
+   *
+   *   mcp_adt_mcp_serve_abap_activate_objects
+   *   {"uris":["abap:/.../zcl_top_test.clas.abap"]}
+   *
+   * None of the JSON-shaped paths (bare object, array, fenced, prose-prefixed,
+   * bracket-repair) match this, so without a fallback the whole thing leaks to
+   * the client as visible text. We use the request's own tool inventory as an
+   * allowlist: a name is only treated as a call when the caller actually
+   * offered it AND the next non-whitespace character (an optional single colon
+   * aside) opens a balanced `{...}` object that parses as JSON. Prose that
+   * merely mentions a tool name — with no object right after it — never
+   * matches, and a truncated (unbalanced) object is left alone. Returns a
+   * synthesized `{"tool_calls":[...]}` string for the normal parse path to
+   * consume, or null when nothing matches. Scans left to right so a response
+   * carrying more than one such call recovers them all in order.
+   */
+  private recoverToolCallsByName(response: string, toolNames: string[]): string | null {
+    const names = toolNames.filter(n => typeof n === 'string' && n.length > 0);
+    if (names.length === 0) {
+      return null;
+    }
+    // Longest name first so one that is a prefix of another (e.g. `edit` vs
+    // `edit_file`) can't shadow the longer, more specific match.
+    const sorted = [...names].sort((a, b) => b.length - a.length);
+
+    const calls: Array<{ name: string; arguments: any }> = [];
+    let searchFrom = 0;
+
+    while (searchFrom < response.length) {
+      let best: { name: string; idx: number; braceStart: number } | null = null;
+
+      for (const name of sorted) {
+        const idx = response.indexOf(name, searchFrom);
+        if (idx === -1) {
+          continue;
+        }
+        // Require the name to be followed (whitespace and at most one colon
+        // aside) by an object opener. This is the guard that keeps a prose
+        // mention of a tool, or a normal/truncated JSON shape, from matching.
+        let j = idx + name.length;
+        while (j < response.length && /\s/.test(response[j]!)) j++;
+        if (response[j] === ':') {
+          j++;
+          while (j < response.length && /\s/.test(response[j]!)) j++;
+        }
+        if (response[j] !== '{') {
+          continue;
+        }
+        if (!best || idx < best.idx) {
+          best = { name, idx, braceStart: j };
+        }
+      }
+
+      if (!best) {
+        break;
+      }
+
+      const objEnd = this.matchBalancedObject(response, best.braceStart);
+      if (objEnd === -1) {
+        // Object never closes (e.g. content truncated mid-value): don't ship a
+        // half-finished argument as if it were complete.
+        break;
+      }
+
+      const argsText = response.slice(best.braceStart, objEnd + 1);
+      try {
+        calls.push({ name: best.name, arguments: JSON.parse(argsText) });
+        searchFrom = objEnd + 1;
+      } catch {
+        // Balanced but not valid JSON — skip past this opener and keep looking.
+        searchFrom = best.braceStart + 1;
+      }
+    }
+
+    return calls.length > 0 ? JSON.stringify({ tool_calls: calls }) : null;
+  }
+
+  /**
+   * Return the index of the `}` that closes the object opening at `start`
+   * (which must be a `{`), respecting string literals and escapes so a brace
+   * inside a quoted value doesn't end the scan early. Returns -1 if the object
+   * never closes (unbalanced/truncated input).
+   */
+  private matchBalancedObject(text: string, start: number): number {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{') {
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          return i;
+        }
+      }
+    }
+
+    return -1;
+  }
+
+  /**
+   * Pull the tool names out of a request's tool list. Tolerates both the
+   * OpenAI-native `{type:'function', function:{name}}` shape and a flattened
+   * `{name}` entry.
+   */
+  private extractToolNames(request: OpenAIRequest): string[] {
+    if (!Array.isArray(request.tools)) {
+      return [];
+    }
+    return request.tools
+      .map((t: any) => (t && t.function && t.function.name) || (t && t.name))
+      .filter((n: any): n is string => typeof n === 'string' && n.length > 0);
+  }
+
+  /**
+   * Bounded head+tail sample of a buffer for diagnostic logging, so a large
+   * leaked response doesn't dump megabytes into the log while still showing the
+   * shape at both ends.
+   */
+  private sampleForLog(text: string, max = 600): string {
+    if (text.length <= max) {
+      return text;
+    }
+    const half = Math.floor(max / 2);
+    return `${text.slice(0, half)}…[${text.length - max} chars omitted]…${text.slice(-half)}`;
+  }
+
+  /**
    * Stream a chat completion as deltas arrive from the Claude CLI.
    *
    * Tool-less requests stream straight through: each text delta is forwarded as
@@ -450,10 +607,12 @@ export class CoreWrapper implements ICoreWrapper {
     // repairUnclosedToolCallsJson). On a length-truncated turn we must NOT
     // repair: the content is genuinely incomplete and a repaired call would
     // apply a half-finished edit.
+    const toolNames = this.extractToolNames(request);
     const toolResponse = this.tryParseMinimalToolCalls(
       buffer,
       request.model,
-      finishReason === 'stop'
+      finishReason === 'stop',
+      toolNames
     );
     const toolCalls = toolResponse?.choices[0]?.message?.tool_calls;
     if (toolCalls && toolCalls.length > 0) {
@@ -467,14 +626,26 @@ export class CoreWrapper implements ICoreWrapper {
     // structural repair, so it's about to be delivered as visible text. Surface
     // it at WARN (metadata only, no buffer content) - a silent leak is exactly
     // what originally hid this bug.
+    const matchedToolName = toolNames.find(n => buffer.includes(n)) ?? null;
     const looksLikeToolAttempt =
       buffer.includes('"tool_calls"') ||
-      (buffer.includes('"name"') && buffer.includes('"arguments"'));
+      (buffer.includes('"name"') && buffer.includes('"arguments"')) ||
+      matchedToolName !== null;
     if (looksLikeToolAttempt) {
       logger.warn('Tool-call JSON present but unparseable - delivering as plain text', {
         model: request.model,
         bufferLength: buffer.length,
-        hasToolCallsAnchor: buffer.includes('"tool_calls"')
+        hasToolCallsAnchor: buffer.includes('"tool_calls"'),
+        matchedToolName
+      });
+      // The WARN stays content-free for normal operation; the actual buffer
+      // shape - the thing we need to see to recover a new leak variant - is
+      // logged only at DEBUG (opt-in via --debug). Metadata-only logging is
+      // what left the previous leak shapes un-diagnosable until a manual
+      // capture; this closes that gap without putting response content in the
+      // default logs.
+      logger.debug('Unparseable tool-call buffer sample', {
+        sample: this.sampleForLog(buffer)
       });
     }
 
