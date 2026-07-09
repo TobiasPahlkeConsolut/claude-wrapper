@@ -16,11 +16,9 @@ claude-wrapper/
 │   │   │   │   ├── chat.ts               # Chat completions endpoint
 │   │   │   │   ├── models.ts             # Models listing endpoint
 │   │   │   │   ├── health.ts             # Health check endpoint
-│   │   │   │   ├── sessions.ts           # Session management endpoints
 │   │   │   │   └── auth.ts               # Authentication status endpoints
 │   │   │   ├── middleware/                # Express middleware
 │   │   │   │   ├── error.ts              # Error handling middleware
-│   │   │   │   ├── session.ts            # Session handling middleware
 │   │   │   │   ├── streaming.ts          # Streaming middleware
 │   │   │   │   └── auth.ts               # Authentication middleware
 │   │   │   └── server.ts                 # Express server setup
@@ -29,7 +27,6 @@ claude-wrapper/
 │   │   │   ├── manager.ts                # Authentication lifecycle management
 │   │   │   └── middleware.ts             # Authentication middleware
 │   │   ├── cli/                           # Command-line interface
-│   │   │   ├── commands.ts               # CLI command definitions
 │   │   │   └── interactive.ts            # Interactive setup prompts
 │   │   ├── config/                        # Configuration management
 │   │   │   ├── env.ts                    # Environment variables
@@ -44,9 +41,6 @@ claude-wrapper/
 │   │   │   ├── daemon.ts                 # Daemon mode implementation
 │   │   │   ├── pid.ts                    # PID file management
 │   │   │   └── signals.ts                # Signal handling for graceful shutdown
-│   │   ├── session/                       # Session management
-│   │   │   ├── manager.ts                # Session lifecycle management
-│   │   │   └── storage.ts                # In-memory TTL storage
 │   │   ├── streaming/                     # Streaming support
 │   │   │   ├── handler.ts                # SSE streaming implementation
 │   │   │   ├── formatter.ts              # OpenAI streaming format compatibility
@@ -63,14 +57,12 @@ claude-wrapper/
 │   │   │   ├── cli/                      # CLI unit tests
 │   │   │   ├── core/                     # Core logic unit tests
 │   │   │   ├── process/                  # Process management unit tests
-│   │   │   ├── session/                  # Session management unit tests
 │   │   │   └── streaming/                # Streaming unit tests
 │   │   ├── integration/                   # Integration tests
 │   │   │   ├── api/                      # API integration tests
 │   │   │   ├── auth/                     # Authentication integration tests
 │   │   │   ├── cli/                      # CLI integration tests
 │   │   │   ├── process/                  # Process integration tests
-│   │   │   ├── session/                  # Session integration tests
 │   │   │   └── streaming/                # Streaming integration tests
 │   │   └── fixtures/                      # Test data and fixtures
 │   ├── package.json                       # Dependencies and scripts
@@ -133,8 +125,8 @@ claude-wrapper --help
 ### **Core Components**
 
 #### **API Layer** (`app/src/api/`)
-- **Routes**: RESTful endpoints for chat, models, health, sessions, and auth
-- **Middleware**: Error handling, session management, streaming, and authentication
+- **Routes**: RESTful endpoints for chat, models, health, and auth
+- **Middleware**: Error handling, streaming, and authentication
 - **Server**: Express.js server configuration and setup
 
 #### **Core Logic** (`app/src/core/`)
@@ -149,11 +141,6 @@ claude-wrapper --help
 - Multi-provider Claude authentication (Anthropic, AWS Bedrock, Google Vertex AI)
 - Optional API protection with bearer tokens
 - Interactive authentication setup
-
-##### **Session Management** (`app/src/session/`)
-- Conversation continuity for multi-turn conversations
-- In-memory TTL storage with automatic cleanup
-- Session lifecycle management
 
 ##### **Streaming Support** (`app/src/streaming/`)
 - Real-time response streaming with Server-Sent Events

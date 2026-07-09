@@ -180,8 +180,6 @@ wrapper -k my-secure-key           # shorthand
 | `GET`    | `/docs`                     | Swagger UI                                    |
 | `GET`    | `/swagger.json`             | OpenAPI 3.0 specification JSON schema         |
 
-> The server also mounts a set of `/v1/sessions` routes backed by an in-memory store. These are a legacy/experimental surface: chat completions do **not** read from or write to it, so they are not needed for normal use and are omitted above.
-
 ## 🚀 CLI Usage
 
 ### Starting the Server

@@ -193,8 +193,6 @@ Options:
 | `GET` | `/docs` | Swagger UI |
 | `GET` | `/swagger.json` | OpenAPI 3.0 specification JSON schema |
 
-> The server also mounts a set of `/v1/sessions` routes backed by an in-memory store. These are a legacy/experimental surface: chat completions do **not** read from or write to it, so they are not needed for normal use and are omitted above.
-
 ## API Documentation
 
 Claude Wrapper includes comprehensive Swagger UI for interactive API exploration.
@@ -646,8 +644,7 @@ This uses the generic aliases so you always follow the latest model per tier:
 ### Performance
 - **No parsing bottlenecks**
 - **Direct JSON passthrough**
-- **Horizontally scalable** architecture (no shared session state between instances)
-- **Efficient session storage** with automatic cleanup (the separate `/v1/sessions` API, not the request-handling path)
+- **Horizontally scalable** architecture (fully stateless — no shared state between instances)
 - **Incremental streaming** — text deltas are forwarded as the CLI produces them (first-token latency is bounded by the CLI's startup and the model's time-to-first-token)
 
 ## Current Status

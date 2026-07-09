@@ -111,7 +111,6 @@ From cli.ts lines 243-247:
 Health:          http://localhost:8000/health
 Chat:            http://localhost:8000/v1/chat/completions  
 Models:          http://localhost:8000/v1/models
-Sessions:        http://localhost:8000/v1/sessions
 Auth Status:     http://localhost:8000/v1/auth/status
 ```
 
