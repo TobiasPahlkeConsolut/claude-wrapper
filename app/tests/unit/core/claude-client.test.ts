@@ -149,17 +149,39 @@ describe('ClaudeClient', () => {
   });
 
   describe('tool serialization (prompt-cache stability)', () => {
-    // The "Available tools:" preamble sits at the front of the piped prompt and
-    // is part of the prefix the Claude CLI's prompt cache keys on. It must be
-    // byte-identical for the same tools however the client happened to order
-    // them (or their keys), or every request silently busts the cache.
+    // The "Available tools:" preamble lives in the --system-prompt-file content
+    // (the resolver's 3rd arg), which is the only region the Claude CLI wraps
+    // with cache_control - so it must be byte-identical for the same tools
+    // however the client happened to order them (or their keys), or every
+    // request silently busts the cache. (Before, it sat in the piped stdin
+    // prompt, which is never cached; see buildSystemPrompt.)
     const toolsLine = (callIndex: number): string => {
-      const prompt = mockResolver.executeClaudeCommand.mock.calls[callIndex]![0]!;
-      return prompt.split('\n')[0]!;
+      const systemPrompt = mockResolver.executeClaudeCommand.mock.calls[callIndex]![2]!;
+      return systemPrompt.split('\n')[0]!;
     };
 
     beforeEach(() => {
       mockResolver.executeClaudeCommand.mockResolvedValue('response');
+    });
+
+    it('puts the tool defs in the cached system prompt, not the piped stdin prompt', async () => {
+      const tool = { type: 'function', function: { name: 'my_tool', description: 'D', parameters: { type: 'object' } } };
+
+      await claudeClient.execute({
+        model: 'm',
+        messages: [{ role: 'system', content: 'You are helpful.' }, { role: 'user', content: 'hi' }],
+        tools: [tool]
+      } as ClaudeRequest);
+
+      const [pipedPrompt, , systemPrompt] = mockResolver.executeClaudeCommand.mock.calls[0]!;
+      // Tools now ride along in the cached system prompt...
+      expect(systemPrompt).toContain('Available tools:');
+      expect(systemPrompt).toContain('my_tool');
+      expect(systemPrompt).toContain('You are helpful.');
+      // ...and are gone from the per-turn stdin prompt (which never caches).
+      expect(pipedPrompt).not.toContain('Available tools:');
+      expect(pipedPrompt).not.toContain('my_tool');
+      expect(pipedPrompt).toContain('hi');
     });
 
     it('serializes the same tools identically regardless of array order', async () => {

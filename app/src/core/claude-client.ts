@@ -12,9 +12,9 @@ export class ClaudeClient implements IClaudeClient {
 
   async execute(request: ClaudeRequest): Promise<string> {
     try {
-      const systemPrompt = this.extractSystemPrompt(request.messages, request.systemPrompt);
+      const systemPrompt = this.buildSystemPrompt(request.messages, request.systemPrompt, request.tools);
       const conversationMessages = request.messages.filter(m => m.role !== 'system');
-      const prompt = this.messagesToPrompt(conversationMessages, request.tools);
+      const prompt = this.messagesToPrompt(conversationMessages);
       logger.debug('Converting messages to prompt', {
         messageCount: request.messages.length,
         model: request.model,
@@ -59,9 +59,9 @@ export class ClaudeClient implements IClaudeClient {
    */
   async *executeStreaming(request: ClaudeRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown> {
     try {
-      const systemPrompt = this.extractSystemPrompt(request.messages, request.systemPrompt);
+      const systemPrompt = this.buildSystemPrompt(request.messages, request.systemPrompt, request.tools);
       const conversationMessages = request.messages.filter(m => m.role !== 'system');
-      const prompt = this.messagesToPrompt(conversationMessages, request.tools);
+      const prompt = this.messagesToPrompt(conversationMessages);
 
       logger.debug('Streaming Claude execution', {
         model: request.model,
@@ -87,21 +87,8 @@ export class ClaudeClient implements IClaudeClient {
     }
   }
 
-  private messagesToPrompt(messages: any[], tools?: any[]): string {
+  private messagesToPrompt(messages: any[]): string {
     let prompt = '';
-
-    // Add tools if provided. This preamble sits at the very front of the piped
-    // prompt, ahead of the whole conversation, so it becomes part of the prefix
-    // the Claude CLI's prompt cache keys on. A raw JSON.stringify preserves
-    // whatever tool order / object-key order the client happened to send, so two
-    // otherwise-identical requests whose tools differ only in order would emit
-    // different bytes here and silently bust the cache for the entire request,
-    // every turn. Canonicalizing (tools sorted by name, keys sorted recursively)
-    // keeps this prefix byte-stable across requests; tool order carries no
-    // meaning to the model, so sorting is safe.
-    if (tools && tools.length > 0) {
-      prompt += `Available tools: ${this.canonicalizeTools(tools)}\n\n`;
-    }
 
     for (const message of messages) {
       if (message.role === 'user') {
@@ -131,17 +118,48 @@ export class ClaudeClient implements IClaudeClient {
 
     logger.debug('Converted messages to prompt', {
       promptLength: prompt.length,
-      messageCount: messages.length,
-      toolCount: tools?.length || 0
+      messageCount: messages.length
     });
 
     return prompt;
   }
 
   /**
+   * Build the --system-prompt-file content: the caller's system prompt/messages
+   * PLUS the tool definitions.
+   *
+   * The tool defs used to sit at the front of the piped stdin prompt. Measured
+   * against a live VS Code / ADT session, that put them in the model's
+   * current-turn input, which the Claude CLI never wraps with cache_control - so
+   * all ~46 tool schemas (the largest fixed cost of every turn) were reprocessed
+   * on every request: prompt-cache hit ratio ~0.06-0.09, cacheReadTokens pinned
+   * at exactly the system-prompt size while cacheCreationTokens climbed. The CLI
+   * only cache_controls the system prompt, and empirically only a byte-identical
+   * prefix is reused (a growing prefix misses - one breakpoint at the block end).
+   * The tool list IS byte-stable across a conversation, so co-locating it with
+   * the (also stable) system prompt lets it be cached after the first turn.
+   *
+   * Tools are placed first so the injected format instruction's "tools listed
+   * above" wording stays accurate, and canonicalizeTools keeps the block
+   * byte-identical regardless of the order the client sent the tools in.
+   */
+  private buildSystemPrompt(
+    messages: any[],
+    explicitSystemPrompt: string | undefined,
+    tools?: any[]
+  ): string | undefined {
+    const base = this.extractSystemPrompt(messages, explicitSystemPrompt);
+    if (!tools || tools.length === 0) {
+      return base;
+    }
+    const toolsBlock = `Available tools: ${this.canonicalizeTools(tools)}`;
+    return base ? `${toolsBlock}\n\n${base}` : toolsBlock;
+  }
+
+  /**
    * Serialize tool definitions to a byte-stable string, independent of the order
    * the client sent the tools in or the key order within each tool object. See
-   * messagesToPrompt for why this matters (prompt-cache prefix stability).
+   * buildSystemPrompt for why this matters (prompt-cache prefix stability).
    */
   private canonicalizeTools(tools: any[]): string {
     const sorted = [...tools].sort((a, b) => {
