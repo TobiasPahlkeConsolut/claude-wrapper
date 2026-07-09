@@ -73,14 +73,12 @@ export interface ClaudeRequest {
 // Core Interface Contracts (SOLID Principles)
 export interface IClaudeClient {
   execute(request: ClaudeRequest): Promise<string>;
-  executeWithSession(request: ClaudeRequest, sessionId: string | null, useJsonOutput: boolean): Promise<string>;
   executeStreaming(request: ClaudeRequest): AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 
 export interface IClaudeResolver {
   findClaudeCommand(): Promise<string>;
-  executeClaudeCommand(prompt: string, model: string): Promise<string>;
-  executeClaudeCommandWithSession(prompt: string, model: string, sessionId: string | null, useJsonOutput: boolean, systemPrompt?: string | null): Promise<string>;
+  executeClaudeCommand(prompt: string, model: string, systemPrompt?: string | null): Promise<string>;
   executeClaudeCommandStreaming(prompt: string, model: string, systemPrompt?: string | null): AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 

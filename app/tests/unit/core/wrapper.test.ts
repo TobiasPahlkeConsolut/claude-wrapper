@@ -47,9 +47,7 @@ describe('CoreWrapper', () => {
             expect.objectContaining({ role: 'user', content: 'What is 2+2?' })
           ])
         })
-      );
-      expect(mockClaudeClient.executeWithSession).not.toHaveBeenCalled();
-      expect(result).toEqual(expect.objectContaining({
+      );      expect(result).toEqual(expect.objectContaining({
         choices: [expect.objectContaining({
           message: expect.objectContaining({
             content: 'The answer is 4'
@@ -74,8 +72,6 @@ describe('CoreWrapper', () => {
 
       // Exactly one call - no separate session-setup round trip
       expect(mockClaudeClient.execute).toHaveBeenCalledTimes(1);
-      expect(mockClaudeClient.executeWithSession).not.toHaveBeenCalled();
-
       const [claudeRequest] = mockClaudeClient.execute.mock.calls[0]!;
       expect(claudeRequest.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: 'system', content: 'You are a math tutor.' }),
@@ -119,8 +115,6 @@ describe('CoreWrapper', () => {
       await wrapper.handleChatCompletion(secondRequest);
 
       expect(mockClaudeClient.execute).toHaveBeenCalledTimes(2);
-      expect(mockClaudeClient.executeWithSession).not.toHaveBeenCalled();
-
       const [secondClaudeRequest] = mockClaudeClient.execute.mock.calls[1]!;
       expect(secondClaudeRequest.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ role: 'system', content: systemPrompt }),

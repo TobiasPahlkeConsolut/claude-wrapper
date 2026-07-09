@@ -143,15 +143,9 @@ export class ClaudeResolver implements IClaudeResolver {
     );
   }
 
-  async executeClaudeCommand(prompt: string, model: string): Promise<string> {
-    return this.executeClaudeCommandWithSession(prompt, model, null, false);
-  }
-
-  async executeClaudeCommandWithSession(
+  async executeClaudeCommand(
     prompt: string,
     model: string,
-    sessionId: string | null,
-    useJsonOutput: boolean,
     systemPrompt?: string | null
   ): Promise<string> {
     const claudeCmd = await this.findClaudeCommand();
@@ -166,16 +160,6 @@ export class ClaudeResolver implements IClaudeResolver {
     // additionally skips CLAUDE.md/MCP/plugins/hooks so a request isn't
     // shaped by whatever happens to be configured in this process's cwd.
     let flags = `--print --model ${model} --safe-mode --tools ""`;
-
-    // Add session flag if provided
-    if (sessionId) {
-      flags += ` --resume ${sessionId}`;
-    }
-
-    // Add JSON output flag if requested
-    if (useJsonOutput) {
-      flags += ` --output-format json`;
-    }
 
     let command: string;
 
@@ -214,11 +198,9 @@ export class ClaudeResolver implements IClaudeResolver {
       command = `"${claudeCmd}" ${flags} < "${tempFile}"`;
     }
 
-    logger.debug('Executing Claude command with session', {
+    logger.debug('Executing Claude command', {
       model,
       promptLength: prompt.length,
-      sessionId,
-      useJsonOutput,
       hasSystemPrompt: !!systemPrompt,
       isDocker: claudeCmd.includes('docker') || claudeCmd.includes('podman')
     });
@@ -255,7 +237,7 @@ export class ClaudeResolver implements IClaudeResolver {
   /**
    * Stream a Claude completion token-by-token.
    *
-   * Unlike executeClaudeCommandWithSession (which uses a buffered `exec` and
+   * Unlike executeClaudeCommand (which uses a buffered `exec` and
    * only returns once the whole answer is ready), this spawns the CLI with
    * `--output-format stream-json --include-partial-messages` and forwards each
    * text delta as the model produces it. The prompt is written to the child's
@@ -286,7 +268,7 @@ export class ClaudeResolver implements IClaudeResolver {
       await fs.promises.writeFile(systemPromptFile, systemPrompt, 'utf-8');
     }
 
-    // Same completion flags as the buffered path (see executeClaudeCommandWithSession
+    // Same completion flags as the buffered path (see executeClaudeCommand
     // for why --safe-mode --tools "" are required), plus the streaming output format.
     const args = [
       '--print',

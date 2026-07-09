@@ -29,23 +29,21 @@ describe('ClaudeClient', () => {
 
     it('should execute Claude command successfully', async () => {
       const mockResponse = 'Mock Claude response';
-      mockResolver.executeClaudeCommandWithSession.mockResolvedValue(mockResponse);
+      mockResolver.executeClaudeCommand.mockResolvedValue(mockResponse);
 
       const result = await claudeClient.execute(mockRequest);
 
       expect(result).toBe(mockResponse);
-      expect(mockResolver.executeClaudeCommandWithSession).toHaveBeenCalledWith(
+      expect(mockResolver.executeClaudeCommand).toHaveBeenCalledWith(
         expect.stringContaining('Hello, how are you?'),
         'claude-3-5-sonnet-20241022',
-        null,
-        false,
         undefined
       );
     });
 
     it('should convert messages to proper prompt format, extracting the system message separately', async () => {
       const mockResponse = 'Mock response';
-      mockResolver.executeClaudeCommandWithSession.mockResolvedValue(mockResponse);
+      mockResolver.executeClaudeCommand.mockResolvedValue(mockResponse);
 
       const requestWithMultipleMessages: ClaudeRequest = {
         model: 'claude-3-5-sonnet-20241022',
@@ -59,9 +57,9 @@ describe('ClaudeClient', () => {
 
       await claudeClient.execute(requestWithMultipleMessages);
 
-      const call = mockResolver.executeClaudeCommandWithSession.mock.calls[0]!;
+      const call = mockResolver.executeClaudeCommand.mock.calls[0]!;
       const capturedPrompt = call[0]!;
-      const capturedSystemPrompt = call[4];
+      const capturedSystemPrompt = call[2];
 
       // System content goes to --system-prompt-file (the 5th arg), not the piped prompt
       expect(capturedSystemPrompt).toBe('You are a helpful assistant.');
@@ -73,7 +71,7 @@ describe('ClaudeClient', () => {
 
     it('should handle ClaudeCliError and re-throw it', async () => {
       const originalError = new ClaudeCliError('Claude CLI failed');
-      mockResolver.executeClaudeCommandWithSession.mockRejectedValue(originalError);
+      mockResolver.executeClaudeCommand.mockRejectedValue(originalError);
 
       await expect(claudeClient.execute(mockRequest)).rejects.toThrow(ClaudeCliError);
       await expect(claudeClient.execute(mockRequest)).rejects.toThrow('Claude CLI failed');
@@ -81,14 +79,14 @@ describe('ClaudeClient', () => {
 
     it('should wrap other errors in ClaudeCliError', async () => {
       const originalError = new Error('Some other error');
-      mockResolver.executeClaudeCommandWithSession.mockRejectedValue(originalError);
+      mockResolver.executeClaudeCommand.mockRejectedValue(originalError);
 
       await expect(claudeClient.execute(mockRequest)).rejects.toThrow(ClaudeCliError);
       await expect(claudeClient.execute(mockRequest)).rejects.toThrow('Claude CLI execution failed: Some other error');
     });
 
     it('should include tool result messages in the prompt', async () => {
-      mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
+      mockResolver.executeClaudeCommand.mockResolvedValue('response');
 
       const requestWithToolMessage: ClaudeRequest = {
         model: 'claude-3-5-sonnet-20241022',
@@ -100,7 +98,7 @@ describe('ClaudeClient', () => {
 
       await claudeClient.execute(requestWithToolMessage);
 
-      const capturedPrompt = mockResolver.executeClaudeCommandWithSession.mock.calls[0]![0]!
+      const capturedPrompt = mockResolver.executeClaudeCommand.mock.calls[0]![0]!
 
       // Without the tool's result in the prompt, Claude has no way to know
       // it already called the tool and gets stuck re-requesting it forever.
@@ -109,7 +107,7 @@ describe('ClaudeClient', () => {
     });
 
     it('should render an assistant tool_calls turn as text instead of the literal word "null"', async () => {
-      mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
+      mockResolver.executeClaudeCommand.mockResolvedValue('response');
 
       const requestWithToolCallTurn: ClaudeRequest = {
         model: 'claude-3-5-sonnet-20241022',
@@ -130,7 +128,7 @@ describe('ClaudeClient', () => {
 
       await claudeClient.execute(requestWithToolCallTurn);
 
-      const capturedPrompt = mockResolver.executeClaudeCommandWithSession.mock.calls[0]![0]!
+      const capturedPrompt = mockResolver.executeClaudeCommand.mock.calls[0]![0]!
 
       expect(capturedPrompt).toContain('get_weather');
       expect(capturedPrompt).toContain('Sunny, 20C');
@@ -139,11 +137,11 @@ describe('ClaudeClient', () => {
     });
 
     it('should generate correct prompt structure', async () => {
-      mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
+      mockResolver.executeClaudeCommand.mockResolvedValue('response');
 
       await claudeClient.execute(mockRequest);
 
-      const capturedPrompt = mockResolver.executeClaudeCommandWithSession.mock.calls[0]![0]!
+      const capturedPrompt = mockResolver.executeClaudeCommand.mock.calls[0]![0]!
       
       // Check that prompt has correct structure
       expect(capturedPrompt).toMatch(/Hello, how are you\?/);
@@ -156,12 +154,12 @@ describe('ClaudeClient', () => {
     // byte-identical for the same tools however the client happened to order
     // them (or their keys), or every request silently busts the cache.
     const toolsLine = (callIndex: number): string => {
-      const prompt = mockResolver.executeClaudeCommandWithSession.mock.calls[callIndex]![0]!;
+      const prompt = mockResolver.executeClaudeCommand.mock.calls[callIndex]![0]!;
       return prompt.split('\n')[0]!;
     };
 
     beforeEach(() => {
-      mockResolver.executeClaudeCommandWithSession.mockResolvedValue('response');
+      mockResolver.executeClaudeCommand.mockResolvedValue('response');
     });
 
     it('serializes the same tools identically regardless of array order', async () => {

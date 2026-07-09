@@ -12,7 +12,6 @@ module.exports = {
     "^@core/(.*)$": "<rootDir>/src/core/$1",
     "^@api/(.*)$": "<rootDir>/src/api/$1",
     "^@auth/(.*)$": "<rootDir>/src/auth/$1",
-    "^@session/(.*)$": "<rootDir>/src/session/$1",
     "^@streaming/(.*)$": "<rootDir>/src/streaming/$1",
     "^@utils/(.*)$": "<rootDir>/src/utils/$1",
     "^@types/(.*)$": "<rootDir>/src/types/$1"

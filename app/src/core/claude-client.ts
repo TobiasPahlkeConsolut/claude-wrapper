@@ -11,10 +11,6 @@ export class ClaudeClient implements IClaudeClient {
   }
 
   async execute(request: ClaudeRequest): Promise<string> {
-    return this.executeWithSession(request, null, false);
-  }
-
-  async executeWithSession(request: ClaudeRequest, sessionId: string | null, useJsonOutput: boolean): Promise<string> {
     try {
       const systemPrompt = this.extractSystemPrompt(request.messages, request.systemPrompt);
       const conversationMessages = request.messages.filter(m => m.role !== 'system');
@@ -23,39 +19,32 @@ export class ClaudeClient implements IClaudeClient {
         messageCount: request.messages.length,
         model: request.model,
         hasTools: !!request.tools,
-        hasSystemPrompt: !!systemPrompt,
-        sessionId,
-        useJsonOutput
+        hasSystemPrompt: !!systemPrompt
       });
 
-      const result = await this.resolver.executeClaudeCommandWithSession(
+      const result = await this.resolver.executeClaudeCommand(
         prompt,
         request.model,
-        sessionId,
-        useJsonOutput,
         systemPrompt
       );
-      
+
       logger.info('Claude execution completed successfully', {
         model: request.model,
-        responseLength: result.length,
-        sessionId,
-        useJsonOutput
+        responseLength: result.length
       });
-      
+
       return result;
-      
+
     } catch (error) {
-      logger.error('Claude CLI execution failed', error as Error, { 
+      logger.error('Claude CLI execution failed', error as Error, {
         model: request.model,
-        messageCount: request.messages.length,
-        sessionId 
+        messageCount: request.messages.length
       });
-      
+
       if (error instanceof ClaudeCliError) {
         throw error;
       }
-      
+
       throw new ClaudeCliError(
         `Claude CLI execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
@@ -64,7 +53,7 @@ export class ClaudeClient implements IClaudeClient {
 
   /**
    * Stream a completion. Same message→prompt/system-prompt conversion as
-   * executeWithSession, but delegates to the resolver's streaming method so
+   * execute, but delegates to the resolver's streaming method so
    * text deltas are forwarded as the CLI produces them. Used only for
    * tool-less requests (the tool_calls convention needs the full text first).
    */

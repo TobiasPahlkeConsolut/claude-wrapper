@@ -1,7 +1,7 @@
 /**
  * Claude Client Mock for externalized test mocking
  * Externalized mock following clean architecture principles
- * 
+ *
  * Single Responsibility: Mock Claude client execution
  */
 
@@ -9,16 +9,12 @@ import { ClaudeRequest, ClaudeStreamEvent } from '../../../src/types';
 
 export interface ClaudeClientMockConfig {
   shouldFailExecution?: boolean;
-  shouldFailSessionExecution?: boolean;
   executionDelay?: number;
   defaultResponse?: string;
-  sessionResponses?: Record<string, string>;
-  sessionSetupResponse?: string;
 }
 
 export interface MockClaudeClient {
   execute: jest.MockedFunction<(request: ClaudeRequest) => Promise<string>>;
-  executeWithSession: jest.MockedFunction<(request: ClaudeRequest, sessionId: string | null, useJsonOutput: boolean) => Promise<string>>;
   executeStreaming: (request: ClaudeRequest) => AsyncGenerator<ClaudeStreamEvent, void, unknown>;
 }
 
@@ -40,38 +36,11 @@ export class ClaudeClientMock {
       if (this.config.shouldFailExecution) {
         throw new Error('Claude CLI execution failed');
       }
-      
-      if (this.config.executionDelay) {
-        await new Promise(resolve => setTimeout(resolve, this.config.executionDelay));
-      }
-      
-      return this.config.defaultResponse || 'Mock response';
-    });
 
-    // Create mock executeWithSession function
-    const mockExecuteWithSession = jest.fn(async (
-      _request: ClaudeRequest, 
-      sessionId: string | null, 
-      useJsonOutput: boolean
-    ): Promise<string> => {
-      if (this.config.shouldFailSessionExecution) {
-        throw new Error('Claude CLI session execution failed');
-      }
-      
       if (this.config.executionDelay) {
         await new Promise(resolve => setTimeout(resolve, this.config.executionDelay));
       }
-      
-      // Session setup call (sessionId is null and useJsonOutput is true)
-      if (sessionId === null && useJsonOutput) {
-        return this.config.sessionSetupResponse || '{"session_id":"test-session-123","result":"Ready"}';
-      }
-      
-      // Session processing call
-      if (sessionId && !useJsonOutput) {
-        return this.config.sessionResponses?.[sessionId] || this.config.defaultResponse || 'Mock session response';
-      }
-      
+
       return this.config.defaultResponse || 'Mock response';
     });
 
@@ -88,7 +57,6 @@ export class ClaudeClientMock {
 
     this.mockInstance = {
       execute: mockExecute,
-      executeWithSession: mockExecuteWithSession,
       executeStreaming: mockExecuteStreaming
     };
 
@@ -103,31 +71,10 @@ export class ClaudeClientMock {
   }
 
   /**
-   * Set session execution failure
-   */
-  static setSessionExecutionFailure(shouldFail: boolean = true): void {
-    this.config.shouldFailSessionExecution = shouldFail;
-  }
-
-  /**
    * Set default response
    */
   static setDefaultResponse(response: string): void {
     this.config.defaultResponse = response;
-  }
-
-  /**
-   * Set session setup response
-   */
-  static setSessionSetupResponse(response: string): void {
-    this.config.sessionSetupResponse = response;
-  }
-
-  /**
-   * Set session responses
-   */
-  static setSessionResponses(responses: Record<string, string>): void {
-    this.config.sessionResponses = responses;
   }
 
   /**
