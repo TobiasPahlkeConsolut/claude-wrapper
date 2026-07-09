@@ -619,6 +619,112 @@ describe('CoreWrapper', () => {
     });
   });
 
+  describe('tool_calls structural repair (trailing bracket)', () => {
+    // The model occasionally ends a large tool_calls object one or more closing
+    // brackets short but otherwise complete — confirmed from a live capture:
+    // the delta-reconstructed text was byte-identical to the CLI's own final
+    // text and equally unbalanced, with stop_reason "stop" (a clean finish, not
+    // a token-limit cutoff). On a clean stop the wrapper re-balances and
+    // recovers the call; on a length-truncated turn, or when a value itself was
+    // cut off mid-string, it must NOT repair (that would ship a half-finished
+    // edit) and instead leaves the text to be delivered as-is.
+    const completeToolCall = JSON.stringify({
+      tool_calls: [{
+        name: 'multi_replace_string_in_file',
+        arguments: {
+          explanation: 'Rename fields',
+          filePath: 'zcl_x.abap',
+          replacements: [
+            { oldString: 'DATA: lv_a TYPE i.', newString: 'DATA: lv_a TYPE i.\n    DATA: lv_b TYPE i.' }
+          ]
+        }
+      }]
+    });
+    const missingOuterBrace = completeToolCall.slice(0, -1); // one closer short
+    const missingTwoClosers = completeToolCall.slice(0, -2); // two closers short
+
+    const toolReq = (): OpenAIRequest => ({
+      model: 'sonnet',
+      messages: [{ role: 'user', content: 'Edit the class' }],
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'multi_replace_string_in_file', parameters: {} } }]
+    });
+
+    async function collect(req: OpenAIRequest): Promise<any[]> {
+      const events: any[] = [];
+      for await (const event of wrapper.streamChatCompletion(req)) events.push(event);
+      return events;
+    }
+
+    it('recovers a tool call missing only its trailing "}" on a clean stop', async () => {
+      ClaudeClientMock.setDefaultResponse(missingOuterBrace); // mock reports finishReason 'stop'
+
+      const events = await collect(toolReq());
+
+      const toolEvent = events.find(e => e.type === 'tool_calls');
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent.toolCalls[0].function.name).toBe('multi_replace_string_in_file');
+      // arguments recovered as valid JSON with the multi-line content intact
+      const args = JSON.parse(toolEvent.toolCalls[0].function.arguments);
+      expect(args.replacements[0].newString).toContain('\n');
+      // nothing leaked as visible text
+      expect(events.some(e => e.type === 'text')).toBe(false);
+      expect(events[events.length - 1]).toEqual(
+        expect.objectContaining({ type: 'done', finishReason: 'tool_calls' })
+      );
+    });
+
+    it('recovers a tool call missing several trailing brackets on a clean stop', async () => {
+      ClaudeClientMock.setDefaultResponse(missingTwoClosers);
+
+      const events = await collect(toolReq());
+
+      const toolEvent = events.find(e => e.type === 'tool_calls');
+      expect(toolEvent).toBeDefined();
+      expect(toolEvent.toolCalls[0].function.name).toBe('multi_replace_string_in_file');
+      expect(events.some(e => e.type === 'text')).toBe(false);
+    });
+
+    it('does NOT repair when the turn was length-truncated (leaks as text instead)', async () => {
+      ClaudeClientMock.setDefaultResponse(missingOuterBrace);
+      ClaudeClientMock.setStreamFinishReason('length'); // token-limit cutoff -> content genuinely incomplete
+
+      const events = await collect(toolReq());
+
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+      const text = events.filter(e => e.type === 'text').map(e => e.text).join('');
+      expect(text).toBe(missingOuterBrace);
+    });
+
+    it('does NOT repair when a value was cut off mid-string (leaks as text instead)', async () => {
+      const midString =
+        '{"tool_calls":[{"name":"replace_string_in_file","arguments":' +
+        '{"filePath":"a.abap","newString":"line1\\nline2 and then it just stops';
+      ClaudeClientMock.setDefaultResponse(midString);
+
+      const events = await collect(toolReq());
+
+      expect(events.some(e => e.type === 'tool_calls')).toBe(false);
+      const text = events.filter(e => e.type === 'text').map(e => e.text).join('');
+      expect(text).toBe(midString);
+    });
+
+    it('does NOT repair on the buffered (non-streaming) path, where the stop reason is unknown', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Edit the class' }],
+        tools: [{ type: 'function', function: { name: 'multi_replace_string_in_file' } }]
+      };
+      ClaudeClientMock.setDefaultResponse(missingOuterBrace);
+      ValidatorMock.setValidationAsValid(false);
+
+      const result = await wrapper.handleChatCompletion(request);
+
+      expect(result.choices[0]!.message.tool_calls).toBeUndefined();
+      expect(result.choices[0]!.message.content).toBe(missingOuterBrace);
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle empty messages array', async () => {
       const request: OpenAIRequest = {

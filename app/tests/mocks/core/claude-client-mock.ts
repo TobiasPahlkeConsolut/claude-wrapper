@@ -11,6 +11,7 @@ export interface ClaudeClientMockConfig {
   shouldFailExecution?: boolean;
   executionDelay?: number;
   defaultResponse?: string;
+  streamFinishReason?: 'stop' | 'length' | 'tool_calls';
 }
 
 export interface MockClaudeClient {
@@ -52,7 +53,7 @@ export class ClaudeClientMock {
       }
       const text = streamConfig.defaultResponse || 'Mock response';
       yield { type: 'text', text };
-      yield { type: 'done', finishReason: 'stop' };
+      yield { type: 'done', finishReason: streamConfig.streamFinishReason || 'stop' };
     }
 
     this.mockInstance = {
@@ -75,6 +76,15 @@ export class ClaudeClientMock {
    */
   static setDefaultResponse(response: string): void {
     this.config.defaultResponse = response;
+  }
+
+  /**
+   * Set the finishReason the streaming mock reports on its terminal 'done'
+   * event (defaults to 'stop'). Used to exercise the length-truncated path,
+   * where trailing-bracket repair must be suppressed.
+   */
+  static setStreamFinishReason(reason: 'stop' | 'length' | 'tool_calls'): void {
+    this.config.streamFinishReason = reason;
   }
 
   /**

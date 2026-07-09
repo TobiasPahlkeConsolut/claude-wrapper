@@ -286,7 +286,7 @@ export class ProcessManager implements IProcessManager {
       
       const { stdout } = await execAsync(
         command,
-        { timeout: PROCESS_CONFIG.HEALTH_CHECK_TIMEOUT_MS }
+        { timeout: PROCESS_CONFIG.HEALTH_CHECK_TIMEOUT_MS, windowsHide: true }
       );
       
       logger.info('Health check response', { stdout });

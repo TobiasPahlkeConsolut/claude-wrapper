@@ -77,6 +77,7 @@ export class DaemonManager implements IDaemonManager {
       const child = spawn(process.execPath, [scriptPath, ...args], {
         detached: true,
         stdio: 'ignore',
+        windowsHide: true, // don't flash a console window when detaching the daemon
         env: {
           ...process.env  // Inherit parent environment variables
         }

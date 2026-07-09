@@ -55,7 +55,7 @@ export class ClaudeResolver implements IClaudeResolver {
     for (const pathCmd of pathCommands) {
       try {
         logger.debug('Trying PATH resolution', { command: pathCmd });
-        const { stdout } = await execAsync(pathCmd, { timeout: 2000 });
+        const { stdout } = await execAsync(pathCmd, { timeout: 2000, windowsHide: true });
         const claudePath = stdout.trim();
         
         if (claudePath && !claudePath.includes('not found')) {
@@ -234,7 +234,10 @@ export class ClaudeResolver implements IClaudeResolver {
     try {
       const { stdout, stderr } = await execAsync(command, {
         maxBuffer: 1024 * 1024 * 10,
-        timeout: config.timeout
+        timeout: config.timeout,
+        // Suppress the transient console window Windows would otherwise spawn
+        // for this child process (the daemon has no console of its own).
+        windowsHide: true
       });
 
       if (stderr && stderr.trim()) {
@@ -321,7 +324,9 @@ export class ClaudeResolver implements IClaudeResolver {
       hasSystemPrompt: !!systemPrompt,
     });
 
-    const child = spawn(claudeCmd, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // windowsHide keeps Windows from popping a console window for the CLI child
+    // on every streaming request (the daemon it's spawned from has no console).
+    const child = spawn(claudeCmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
     // If the child dies before we finish writing, stdin emits EPIPE; swallow it
     // so it doesn't crash the process (the close handler surfaces the real error).
@@ -443,7 +448,7 @@ export class ClaudeResolver implements IClaudeResolver {
   private async testClaudeCommand(command: string): Promise<boolean> {
     try {
       const testCmd = `${command} --version`;
-      const { stdout, stderr } = await execAsync(testCmd, { timeout: 3000 });
+      const { stdout, stderr } = await execAsync(testCmd, { timeout: 3000, windowsHide: true });
       const output = (stdout + stderr).toLowerCase();
       
       // Check for Claude CLI indicators

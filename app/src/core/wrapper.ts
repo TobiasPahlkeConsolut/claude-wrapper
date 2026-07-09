@@ -167,7 +167,11 @@ export class CoreWrapper implements ICoreWrapper {
    * response envelope around it here rather than asking the model to fabricate
    * ids/timestamps/usage itself.
    */
-  private tryParseMinimalToolCalls(response: string, model: string): OpenAIResponse | null {
+  private tryParseMinimalToolCalls(
+    response: string,
+    model: string,
+    allowStructuralRepair = false
+  ): OpenAIResponse | null {
     // The model is asked to respond with nothing but the JSON object, but
     // often prefaces it with a sentence anyway ("I'll check that.\n\n{...}").
     // Try the whole trimmed string first (the common case), then fall back to
@@ -177,7 +181,17 @@ export class CoreWrapper implements ICoreWrapper {
     try {
       parsed = JSON.parse(response.trim());
     } catch {
-      const extracted = this.extractToolCallsJson(response);
+      let extracted = this.extractToolCallsJson(response);
+      // The model occasionally ends a large tool_calls object one or more
+      // closing brackets short. Confirmed from a live capture: the CLI's own
+      // authoritative final text was byte-identical to ours and also unbalanced,
+      // with stop_reason "stop" — the model finished cleanly but simply dropped
+      // the trailing "}". When the caller confirms that clean stop
+      // (allowStructuralRepair), recover the call by re-balancing the brackets
+      // instead of leaking the whole thing to the client as visible text.
+      if (!extracted && allowStructuralRepair) {
+        extracted = this.repairUnclosedToolCallsJson(response);
+      }
       if (!extracted) {
         return null;
       }
@@ -298,6 +312,79 @@ export class CoreWrapper implements ICoreWrapper {
   }
 
   /**
+   * Recover a `{"tool_calls": ...}` object the model left one or more trailing
+   * brackets short. Only invoked when the caller has confirmed the model
+   * stopped cleanly (not truncated by a token limit), so the *content* is
+   * complete and only the closing structure is missing. Scans from the opening
+   * brace to end-of-input, tracking string state and bracket nesting. If the
+   * input ends mid-string — meaning a value itself was cut off, not just the
+   * structure — it refuses (returns null) rather than fabricate a complete-
+   * looking but truncated argument (e.g. half a file edit). Otherwise it
+   * appends the missing `}`/`]` in the correct (LIFO) order.
+   */
+  private repairUnclosedToolCallsJson(response: string): string | null {
+    const anchor = response.indexOf('"tool_calls"');
+    if (anchor === -1) {
+      return null;
+    }
+
+    const start = response.lastIndexOf('{', anchor);
+    if (start === -1) {
+      return null;
+    }
+
+    // We only get here when extractToolCallsJson found no balanced object, i.e.
+    // the object runs unclosed to the end. Take everything from the opening
+    // brace and drop only trailing whitespace before re-balancing.
+    const candidate = response.slice(start).replace(/\s+$/, '');
+
+    const stack: string[] = [];
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < candidate.length; i++) {
+      const char = candidate[i];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{' || char === '[') {
+        stack.push(char);
+      } else if (char === '}' || char === ']') {
+        stack.pop();
+      }
+    }
+
+    // Ended inside a string: the content itself was cut off mid-value, not just
+    // the closing structure. Repairing would ship a truncated argument as if it
+    // were complete, so refuse and let it fall through to the plain-text path.
+    if (inString) {
+      return null;
+    }
+    // Already balanced: the parse failure was something other than missing
+    // trailing structure (e.g. a syntax error mid-object) — nothing safe to do.
+    if (stack.length === 0) {
+      return null;
+    }
+
+    let repaired = candidate;
+    for (let i = stack.length - 1; i >= 0; i--) {
+      repaired += stack[i] === '{' ? '}' : ']';
+    }
+    return repaired;
+  }
+
+  /**
    * Stream a chat completion as deltas arrive from the Claude CLI.
    *
    * Tool-less requests stream straight through: each text delta is forwarded as
@@ -357,12 +444,38 @@ export class CoreWrapper implements ICoreWrapper {
     // Whole response in hand: pull out a tool call if there is one anywhere in
     // it (tryParseMinimalToolCalls handles bare/wrapped/fenced/prose-prefixed
     // shapes), otherwise deliver the buffered text.
-    const toolResponse = this.tryParseMinimalToolCalls(buffer, request.model);
+    // A clean stop (finishReason 'stop' — not truncated by a token limit) means
+    // the model finished its output, so if the tool_calls JSON is missing only
+    // its trailing brackets it's safe to repair rather than leak (see
+    // repairUnclosedToolCallsJson). On a length-truncated turn we must NOT
+    // repair: the content is genuinely incomplete and a repaired call would
+    // apply a half-finished edit.
+    const toolResponse = this.tryParseMinimalToolCalls(
+      buffer,
+      request.model,
+      finishReason === 'stop'
+    );
     const toolCalls = toolResponse?.choices[0]?.message?.tool_calls;
     if (toolCalls && toolCalls.length > 0) {
       yield { type: 'tool_calls', toolCalls };
       yield { type: 'done', finishReason: 'tool_calls', ...(usage && { usage }) };
       return;
+    }
+
+    // A genuine leak: the model clearly attempted a tool call (a tool_calls or
+    // name+arguments shape is present) but it couldn't be recovered even with
+    // structural repair, so it's about to be delivered as visible text. Surface
+    // it at WARN (metadata only, no buffer content) - a silent leak is exactly
+    // what originally hid this bug.
+    const looksLikeToolAttempt =
+      buffer.includes('"tool_calls"') ||
+      (buffer.includes('"name"') && buffer.includes('"arguments"'));
+    if (looksLikeToolAttempt) {
+      logger.warn('Tool-call JSON present but unparseable - delivering as plain text', {
+        model: request.model,
+        bufferLength: buffer.length,
+        hasToolCallsAnchor: buffer.includes('"tool_calls"')
+      });
     }
 
     if (buffer) {
