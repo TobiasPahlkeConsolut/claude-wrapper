@@ -8,8 +8,6 @@ import modelsRoutes from './routes/models';
 import healthRoutes from './routes/health';
 import authRoutes from './routes/auth';
 import logsRoutes from './routes/logs';
-// WSL port-forwarding route disabled (WSL support turned off for performance).
-// import portForwardingRoutes from './routes/port-forwarding';
 import { logger } from '../utils/logger';
 import { EnvironmentManager } from '../config/env';
 import { createAuthMiddleware, getApiKey } from '../auth/middleware';
@@ -67,7 +65,6 @@ app.use('/', healthRoutes);
 app.use('/', modelsRoutes);
 app.use('/', authRoutes);
 app.use('/', logsRoutes);
-// app.use('/', portForwardingRoutes); // WSL port-forwarding disabled for performance
 app.use('/', chatRoutes);
 
 // Error handling (must be last)
