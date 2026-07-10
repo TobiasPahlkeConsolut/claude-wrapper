@@ -123,6 +123,13 @@ export class CoreWrapper implements ICoreWrapper {
     // Model was only ever asked for a minimal {"tool_calls": [...]} snippet (see
     // createFormatTemplate) — not a full envelope — so check for that shape before
     // falling back to plain text.
+    //
+    // Note: structural repair / bare-name recovery are deliberately NOT enabled
+    // here. Those are gated on a clean stop reason (see streamChatCompletion),
+    // which the buffered path has no way to observe — the CLI can return a
+    // length-truncated (max_tokens) turn in full via stdout, and repairing it
+    // would silently ship a half-finished tool call (e.g. a truncated file
+    // edit). Leaking it as visible text is the safer failure here.
     const toolCallsResponse = this.tryParseMinimalToolCalls(response, originalRequest.model);
     if (toolCallsResponse) {
       logger.info('Minimal tool_calls response received', { attempt });

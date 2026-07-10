@@ -82,25 +82,28 @@ Alternative command: You can also use 'claude-wrapper' instead of 'wrapper'`);
    * Process parsed options and arguments
    */
   private processOptions(options: CliOptions, args: string[]): CliOptions {
-    // Handle port from --port option or positional argument
-    let portToUse = options.port;
-    
-    if (!portToUse && args.length > 0) {
-      const portArg = args[0]!;
-      const portNum = parseInt(portArg, 10);
-      
-      if (!isNaN(portNum) && portNum >= 1 && portNum <= 65535) {
-        portToUse = portArg;
-        logger.info(`Using port from command line: ${portNum}`);
+    // Resolve the port from --port (preferred) or the positional argument, then
+    // validate BOTH the same way. Previously only the positional arg was
+    // range-checked; a bad --port value (e.g. `--port abc`) fell straight
+    // through to the daemon, where `parseInt('abc')` -> NaN made `app.listen`
+    // bind a random port while the CLI advertised the one you asked for.
+    const rawPort = options.port ?? (args.length > 0 ? args[0] : undefined);
+
+    if (rawPort !== undefined) {
+      const trimmed = rawPort.trim();
+      const portNum = parseInt(trimmed, 10);
+
+      // `String(portNum) === trimmed` rejects trailing garbage like `8000x`
+      // (parseInt would otherwise silently accept it as 8000).
+      if (!isNaN(portNum) && portNum >= 1 && portNum <= 65535 && String(portNum) === trimmed) {
+        options.port = String(portNum);
+        logger.info(`Using port: ${portNum}`);
       } else {
-        logger.warn(`Invalid port number: ${portArg}. Using default.`);
+        logger.warn(`Invalid port number: ${rawPort}. Using default.`);
+        delete options.port;
       }
     }
-    
-    if (portToUse) {
-      options.port = portToUse;
-    }
-    
+
     return options;
   }
 }

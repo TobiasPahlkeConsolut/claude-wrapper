@@ -35,6 +35,7 @@ describe('DaemonManager', () => {
   let originalExecPath: string;
   let originalJoin: any;
   let originalKill: any;
+  let originalHttpGet: any;
 
   beforeEach(() => {
     // Store original values
@@ -42,6 +43,18 @@ describe('DaemonManager', () => {
     originalExecPath = process.execPath;
     originalJoin = require('path').join;
     originalKill = process.kill;
+    originalHttpGet = require('http').get;
+
+    // startDaemon now waits for the daemon's /health to answer before it
+    // reports success (so a failed bind can't masquerade as a started server).
+    // In this unit test nothing is actually listening, so stub http.get to
+    // answer 200 immediately - otherwise the readiness probe would hit the real
+    // network and make these tests depend on whether a daemon happens to be up.
+    require('http').get = (_opts: any, cb: any) => {
+      const res = { statusCode: 200, resume: () => {}, on: () => {} };
+      if (typeof cb === 'function') { process.nextTick(() => cb(res)); }
+      return { on: () => {}, destroy: () => {} };
+    };
 
     // Reset all externalized mocks
     DaemonChildProcessMock.reset();
@@ -82,6 +95,7 @@ describe('DaemonManager', () => {
     // Restore original values
     require('child_process').spawn = originalSpawn;
     require('path').join = originalJoin;
+    require('http').get = originalHttpGet;
     Object.defineProperty(process, 'execPath', {
       value: originalExecPath,
       writable: true,

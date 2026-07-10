@@ -19,9 +19,14 @@ function parseDaemonArgs(): { port: number; apiKey?: string; verbose?: boolean; 
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case '--port':
-        result.port = parseInt(args[++i] || '8000');
+      case '--port': {
+        // Defense-in-depth: the CLI already validates the port, but guard here
+        // too so a malformed value can never reach app.listen() as NaN (which
+        // silently binds a random ephemeral port).
+        const parsed = parseInt(args[++i] || '8000', 10);
+        result.port = (!isNaN(parsed) && parsed >= 1 && parsed <= 65535) ? parsed : 8000;
         break;
+      }
       case '--api-key': {
         const apiKeyValue = args[++i];
         if (apiKeyValue) {
@@ -73,6 +78,20 @@ async function startDaemon(): Promise<void> {
       logger.info(`📚 Swagger UI at http://localhost:${options.port}/docs`);
       logger.info(`📋 OpenAPI spec at http://localhost:${options.port}/swagger.json`);
     }
+  });
+
+  // Without this, a bind failure (most commonly EADDRINUSE) is an uncaught
+  // exception that kills the detached daemon silently - and since the parent
+  // spawned us with stdio:'ignore' after already printing "started
+  // successfully", the user is left with a server that never listened and no
+  // error at all. Log the real reason and exit non-zero so the parent's
+  // readiness probe reports the start as failed.
+  server.on('error', (err: Error & { code?: string }) => {
+    const detail = err.code === 'EADDRINUSE'
+      ? `port ${options.port} is already in use`
+      : err.message;
+    logger.error(`Daemon failed to start: ${detail}`, err);
+    process.exit(1);
   });
 
   // Setup graceful shutdown using new signal handler

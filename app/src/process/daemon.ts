@@ -7,7 +7,7 @@
 
 import { spawn } from 'child_process';
 import * as path from 'path';
-import { PROCESS_CONFIG } from '../config/constants';
+import { PROCESS_CONFIG, PROCESS_PERFORMANCE, API_CONSTANTS } from '../config/constants';
 import { logger } from '../utils/logger';
 import { pidManager } from './pid';
 
@@ -86,19 +86,41 @@ export class DaemonManager implements IDaemonManager {
       if (!child.pid) {
         throw new DaemonError('Failed to spawn daemon process', 'start');
       }
+      const pid = child.pid;
 
       // Save PID for management (non-fatal if this fails)
       try {
-        pidManager.savePid(child.pid);
+        pidManager.savePid(pid);
       } catch (pidError) {
-        logger.warn('Failed to save PID file, daemon started but may be harder to manage', { pid: child.pid, error: pidError instanceof Error ? pidError.message : 'Unknown error' });
+        logger.warn('Failed to save PID file, daemon started but may be harder to manage', { pid, error: pidError instanceof Error ? pidError.message : 'Unknown error' });
       }
-      
+
       // Allow parent to exit
       child.unref();
 
-      logger.info('Daemon process started successfully', { pid: child.pid });
-      return child.pid;
+      // spawn() only tells us the child process launched, not that the server
+      // inside it bound the port. The daemon is detached with stdio:'ignore',
+      // so a bind failure (e.g. the port is already in use) is otherwise
+      // invisible - we'd return the pid and the CLI would print "started
+      // successfully" for a server that immediately died. Wait until it
+      // actually answers on /health before declaring success, and clean up the
+      // pid/child if it never does.
+      const port = options.port ? parseInt(options.port, 10) : API_CONSTANTS.DEFAULT_PORT;
+      try {
+        await this.waitForServerReady(port, PROCESS_PERFORMANCE.STARTUP_TIMEOUT_MS);
+      } catch (readyError) {
+        try { process.kill(pid); } catch { /* child likely already exited */ }
+        try { pidManager.cleanupPidFile(); } catch { /* best effort */ }
+        throw new DaemonError(
+          `Daemon (PID ${pid}) did not start listening on port ${port} within ` +
+          `${PROCESS_PERFORMANCE.STARTUP_TIMEOUT_MS}ms - the port may already be in use.`,
+          'start',
+          pid
+        );
+      }
+
+      logger.info('Daemon process started successfully', { pid });
+      return pid;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('Failed to start daemon process', error instanceof Error ? error : undefined, { error: errorMessage });
@@ -220,6 +242,49 @@ export class DaemonManager implements IDaemonManager {
     }
     
     return args;
+  }
+
+  /**
+   * Poll the daemon's /health endpoint until it responds 200, or reject when
+   * timeoutMs elapses. Probes 127.0.0.1 regardless of the configured bind host
+   * (a server bound to 0.0.0.0 still answers on loopback), and /health needs no
+   * auth, so this works even when an API key is configured.
+   */
+  private async waitForServerReady(port: number, timeoutMs: number): Promise<void> {
+    const http = await import('http');
+    const startTime = Date.now();
+    // Poll faster than the process-exit interval: readiness usually lands well
+    // under a second, and we don't want to add a full second of latency to the
+    // common (successful) start.
+    const checkInterval = 200;
+
+    return new Promise<void>((resolve, reject) => {
+      const attempt = (): void => {
+        const req = http.get(
+          { host: '127.0.0.1', port, path: '/health', timeout: 1000 },
+          (res) => {
+            res.resume(); // drain the response so the socket can close
+            if (res.statusCode === 200) {
+              resolve();
+            } else {
+              retry();
+            }
+          }
+        );
+        req.on('error', () => retry());
+        req.on('timeout', () => { req.destroy(); retry(); });
+      };
+
+      const retry = (): void => {
+        if (Date.now() - startTime >= timeoutMs) {
+          reject(new DaemonError(`Server did not become ready within ${timeoutMs}ms`, 'start'));
+          return;
+        }
+        setTimeout(attempt, checkInterval);
+      };
+
+      attempt();
+    });
   }
 
   /**

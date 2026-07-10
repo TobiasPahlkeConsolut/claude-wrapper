@@ -135,6 +135,10 @@ export class StreamingHandler implements IStreamingHandler {
     } catch (error) {
       logger.error('Error creating streaming response', error instanceof Error ? error : new Error(String(error)));
       yield this.formatter.formatError(error instanceof Error ? error : new Error(String(error)));
+      // Terminate the SSE stream after the error frame. Without the [DONE]
+      // sentinel, clients that block until they see it hang until their own
+      // timeout instead of failing fast on the error we just sent.
+      yield this.formatter.formatDone();
     }
   }
 
